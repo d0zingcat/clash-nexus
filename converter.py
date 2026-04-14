@@ -461,10 +461,39 @@ def convert_rules_and_remote_rules(
 # ---------------------------------------------------------------------------
 
 
-def convert_hosts(hosts: dict) -> str:
+def convert_hosts(hosts: dict, nameserver_policy: dict | None = None) -> str:
     lines = ["[Host]"]
     for domain, target in hosts.items():
         lines.append(f"{domain} = {target}")
+
+    # nameserver-policy: domain -> DNS server mapping
+    # Clash: "geosite:cn": "114.114.114.114" or "+.example.com": "https://doh.example.com/dns-query"
+    # Loon:  *.example.com = server:8.8.8.8  or  *.example.com = server:https://doh.example.com/dns-query
+    if nameserver_policy:
+        lines.append("# --- nameserver-policy ---")
+        for domain_pattern, dns_server in nameserver_policy.items():
+            # Normalize domain pattern
+            pattern = str(domain_pattern).strip()
+
+            # Skip geosite: patterns — Loon has no equivalent
+            if pattern.startswith("geosite:"):
+                lines.append(
+                    f"# [WARNING] geosite pattern not supported in Loon: {pattern} -> {dns_server}"
+                )
+                continue
+
+            # Clash uses "+.example.com" for wildcard, Loon uses "*.example.com"
+            if pattern.startswith("+."):
+                pattern = "*." + pattern[2:]
+
+            # dns_server can be a single server string or a list
+            servers = dns_server if isinstance(dns_server, list) else [dns_server]
+            server = str(servers[0]).strip()
+
+            # Loon format: domain = server:dns_address
+            # For DoH/DoQ, pass through as-is; for plain IP, also pass through
+            lines.append(f"{pattern} = server:{server}")
+
     return "\n".join(lines)
 
 
@@ -507,8 +536,10 @@ def convert(config: dict) -> str:
 
     # [Host]
     hosts = config.get("hosts", {})
-    if hosts:
-        sections.append(convert_hosts(hosts))
+    dns_cfg = config.get("dns", {})
+    ns_policy = dns_cfg.get("nameserver-policy", {})
+    if hosts or ns_policy:
+        sections.append(convert_hosts(hosts or {}, ns_policy or None))
 
     # Empty stubs for sections Loon expects but we don't populate
     sections.append("[Rewrite]")
