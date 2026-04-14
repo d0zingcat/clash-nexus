@@ -8,7 +8,7 @@ build/
 venv/
 
 # Output
-loon.conf
+output/
 
 # OS
 .DS_Store

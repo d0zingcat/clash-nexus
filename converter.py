@@ -525,12 +525,17 @@ def main():
     parser = argparse.ArgumentParser(
         description="Convert Clash YAML config to Loon .conf"
     )
-    parser.add_argument("input", help="Path to Clash YAML config file")
+    parser.add_argument(
+        "input",
+        nargs="?",
+        default="input/all-in-one.yaml",
+        help="Path to Clash YAML config file (default: input/all-in-one.yaml)",
+    )
     parser.add_argument(
         "-o",
         "--output",
-        default="loon.conf",
-        help="Output Loon config file path (default: loon.conf)",
+        default="output/loon.conf",
+        help="Output Loon config file path (default: output/loon.conf)",
     )
     args = parser.parse_args()
 
@@ -552,6 +557,7 @@ def main():
     result = convert(config)
 
     output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(result)
 
