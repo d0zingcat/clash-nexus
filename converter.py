@@ -28,30 +28,52 @@ def convert_general(config: dict) -> str:
     # DNS -------------------------------------------------------------------
     dns_cfg = config.get("dns", {})
 
-    # Collect plain UDP nameservers
+    # Collect plain UDP nameservers from both default-nameserver and nameserver
     udp_servers = []
+    for ns in dns_cfg.get("default-nameserver", []):
+        ns = str(ns).strip()
+        if not ns.startswith(("https://", "tls://", "quic://", "h3://")):
+            udp_servers.append(ns)
     for ns in dns_cfg.get("nameserver", []):
         ns = str(ns).strip()
-        if (
-            ns.startswith("https://")
-            or ns.startswith("tls://")
-            or ns.startswith("quic://")
-        ):
-            continue
-        udp_servers.append(ns)
+        if not ns.startswith(("https://", "tls://", "quic://", "h3://")):
+            if ns not in udp_servers:
+                udp_servers.append(ns)
     if udp_servers:
         lines.append(f"dns-server = system,{','.join(udp_servers)}")
     else:
         lines.append("dns-server = system")
 
-    # Collect DoH servers from fallback
+    # Collect DoH servers from nameserver + fallback
     doh_servers = []
+    for ns in dns_cfg.get("nameserver", []):
+        ns = str(ns).strip().strip("'\"")
+        if ns.startswith("https://"):
+            doh_servers.append(ns)
     for fb in dns_cfg.get("fallback", []):
         fb = str(fb).strip().strip("'\"")
-        if fb.startswith("https://"):
+        if fb.startswith("https://") and fb not in doh_servers:
             doh_servers.append(fb)
     if doh_servers:
         lines.append(f"doh-server = {','.join(doh_servers)}")
+
+    # Collect DoQ servers
+    doq_servers = []
+    for src in [dns_cfg.get("nameserver", []), dns_cfg.get("fallback", [])]:
+        for ns in src:
+            ns = str(ns).strip().strip("'\"")
+            if ns.startswith("quic://") and ns not in doq_servers:
+                doq_servers.append(ns)
+    if doq_servers:
+        lines.append(f"doq-server = {','.join(doq_servers)}")
+
+    # proxy-server-nameserver / direct-nameserver — Loon has no equivalent
+    if dns_cfg.get("proxy-server-nameserver"):
+        lines.append(
+            "# [NOTE] proxy-server-nameserver is Clash-specific, no Loon equivalent"
+        )
+    if dns_cfg.get("direct-nameserver"):
+        lines.append("# [NOTE] direct-nameserver is Clash-specific, no Loon equivalent")
 
     # ip-mode
     ipv6 = config.get("ipv6", dns_cfg.get("ipv6", False))
@@ -128,6 +150,31 @@ def _convert_ss(p: dict) -> str:
     cipher = p.get("cipher", "aes-256-gcm")
     password = p.get("password", "")
     parts = [f'{name} = Shadowsocks,{server},{port},{cipher},"{password}"']
+
+    # simple-obfs plugin
+    plugin = p.get("plugin", "")
+    plugin_opts = p.get("plugin-opts", {})
+    if plugin == "obfs":
+        mode = plugin_opts.get("mode", "http")
+        parts.append(f"obfs-name={mode}")
+        host = plugin_opts.get("host", "")
+        if host:
+            parts.append(f"obfs-host={host}")
+        uri = plugin_opts.get("uri") or plugin_opts.get("path", "")
+        if uri:
+            parts.append(f"obfs-uri={uri}")
+    elif plugin == "shadow-tls":
+        stls_pw = plugin_opts.get("password", "")
+        stls_host = plugin_opts.get("host", "")
+        stls_ver = plugin_opts.get("version", 3)
+        if stls_pw:
+            parts.append(f"shadow-tls-password={stls_pw}")
+        if stls_host:
+            parts.append(f"shadow-tls-sni={stls_host}")
+        parts.append(f"shadow-tls-version={stls_ver}")
+    elif plugin:
+        parts.append(f"# [WARNING] unsupported SS plugin: {plugin}")
+
     parts.append(f"fast-open={'true' if p.get('fast-open', False) else 'false'}")
     parts.append(f"udp={'true' if p.get('udp', True) else 'false'}")
     return ",".join(parts)
@@ -232,12 +279,83 @@ def _convert_hysteria2(p: dict) -> str:
     return ",".join(parts)
 
 
+def _convert_ssr(p: dict) -> str:
+    name = p["name"]
+    server = p["server"]
+    port = p["port"]
+    cipher = p.get("cipher", "aes-256-cfb")
+    password = p.get("password", "")
+    parts = [f'{name} = ShadowsocksR,{server},{port},{cipher},"{password}"']
+    protocol = p.get("protocol", "origin")
+    parts.append(f"protocol={protocol}")
+    protocol_param = p.get("protocol-param", "")
+    if protocol_param:
+        parts.append(f"protocol-param={protocol_param}")
+    obfs = p.get("obfs", "plain")
+    parts.append(f"obfs={obfs}")
+    obfs_param = p.get("obfs-param", "")
+    if obfs_param:
+        parts.append(f"obfs-param={obfs_param}")
+    parts.append(f"fast-open={'true' if p.get('fast-open', False) else 'false'}")
+    parts.append(f"udp={'true' if p.get('udp', True) else 'false'}")
+    return ",".join(parts)
+
+
+def _convert_socks5(p: dict) -> str:
+    name = p["name"]
+    server = p["server"]
+    port = p["port"]
+    username = p.get("username", "")
+    password = p.get("password", "")
+    if username and password:
+        parts = [f'{name} = socks5,{server},{port},"{username}","{password}"']
+    elif username:
+        parts = [f'{name} = socks5,{server},{port},"{username}",""']
+    else:
+        parts = [f"{name} = socks5,{server},{port}"]
+    tls = p.get("tls", False)
+    if tls:
+        if p.get("skip-cert-verify"):
+            parts.append("skip-cert-verify=true")
+        sni = p.get("sni", "")
+        if sni:
+            parts.append(f"sni={sni}")
+    parts.append(f"udp={'true' if p.get('udp', True) else 'false'}")
+    return ",".join(parts)
+
+
+def _convert_http(p: dict) -> str:
+    name = p["name"]
+    server = p["server"]
+    port = p["port"]
+    tls = p.get("tls", False)
+    proto = "https" if tls else "http"
+    username = p.get("username", "")
+    password = p.get("password", "")
+    if username and password:
+        parts = [f'{name} = {proto},{server},{port},"{username}","{password}"']
+    elif username:
+        parts = [f'{name} = {proto},{server},{port},"{username}",""']
+    else:
+        parts = [f"{name} = {proto},{server},{port}"]
+    if tls:
+        if p.get("skip-cert-verify"):
+            parts.append("skip-cert-verify=true")
+        sni = p.get("sni", "")
+        if sni:
+            parts.append(f"sni={sni}")
+    return ",".join(parts)
+
+
 PROXY_CONVERTERS = {
     "trojan": _convert_trojan,
     "ss": _convert_ss,
+    "ssr": _convert_ssr,
     "vmess": _convert_vmess,
     "vless": _convert_vless,
     "hysteria2": _convert_hysteria2,
+    "socks5": _convert_socks5,
+    "http": _convert_http,
 }
 
 
@@ -449,8 +567,45 @@ def convert_rules_and_remote_rules(
             policy = parts[1] if len(parts) > 1 else "DIRECT"
             local_lines.append(f"FINAL,{policy}")
 
+        elif rule_type == "DST-PORT":
+            # Loon uses DEST-PORT
+            local_lines.append(",".join(["DEST-PORT"] + parts[1:]))
+
+        elif rule_type in (
+            "GEOSITE",
+            "DOMAIN-REGEX",
+            "DOMAIN-WILDCARD",
+            "IP-SUFFIX",
+            "SRC-IP-SUFFIX",
+            "SRC-GEOIP",
+            "SRC-IP-ASN",
+            "SRC-IP-CIDR",
+            "IN-PORT",
+            "IN-TYPE",
+            "IN-USER",
+            "IN-NAME",
+            "PROCESS-PATH",
+            "PROCESS-PATH-REGEX",
+            "PROCESS-PATH-WILDCARD",
+            "PROCESS-NAME",
+            "PROCESS-NAME-REGEX",
+            "PROCESS-NAME-WILDCARD",
+            "UID",
+            "DSCP",
+            "NETWORK",
+            "SUB-RULE",
+            "AND",
+            "OR",
+            "NOT",
+        ):
+            # These Clash rules have no direct Loon equivalent
+            local_lines.append(
+                f"# [WARNING] Unsupported rule type in Loon: {','.join(parts)}"
+            )
+
         else:
-            # DOMAIN, DOMAIN-SUFFIX, IP-CIDR, GEOIP, etc. — pass through
+            # DOMAIN, DOMAIN-SUFFIX, DOMAIN-KEYWORD, IP-CIDR, IP-CIDR6,
+            # GEOIP, IP-ASN, SRC-PORT, DEST-PORT, PROTOCOL — pass through
             local_lines.append(",".join(parts))
 
     return "\n".join(local_lines), "\n".join(remote_lines)
@@ -475,10 +630,10 @@ def convert_hosts(hosts: dict, nameserver_policy: dict | None = None) -> str:
             # Normalize domain pattern
             pattern = str(domain_pattern).strip()
 
-            # Skip geosite: patterns — Loon has no equivalent
-            if pattern.startswith("geosite:"):
+            # Skip geosite: and rule-set: patterns — Loon has no equivalent
+            if pattern.startswith("geosite:") or pattern.startswith("rule-set:"):
                 lines.append(
-                    f"# [WARNING] geosite pattern not supported in Loon: {pattern} -> {dns_server}"
+                    f"# [WARNING] pattern not supported in Loon: {pattern} -> {dns_server}"
                 )
                 continue
 
