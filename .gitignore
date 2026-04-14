@@ -10,6 +10,10 @@ venv/
 # Output
 output/
 
+# Input (real configs contain secrets, only track example)
+input/*
+!input/example.yaml
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,0 +1,411 @@
+
+rules:
+  # AI services
+  - RULE-SET,Gemini,AI
+  - RULE-SET,OpenAI,AI
+  - RULE-SET,Anthropic,AI
+  - RULE-SET,Binance,Crypto
+  - RULE-SET,OKX,Crypto
+  - RULE-SET,Apple,GlobalCompany
+  - RULE-SET,Microsoft,GlobalCompany
+  - RULE-SET,China,DIRECT
+  - RULE-SET,BiliBili,DIRECT
+  - RULE-SET,Tencent,DIRECT
+  - DOMAIN-SUFFIX,example.com,DIRECT
+  - DOMAIN-SUFFIX,proxy1.example.com,DIRECT
+  - DOMAIN-SUFFIX,proxy2.example.com,DIRECT
+  - DOMAIN,game.example.com,DIRECT
+  - DOMAIN-SUFFIX,hsbc.com.hk,🇭🇰 Hong Kong
+  - DOMAIN-SUFFIX,bilibili.com, DIRECT
+ 
+  - DOMAIN-SUFFIX,apple-relay.apple.com,AI
+  - DOMAIN-SUFFIX,apple-relay.cloudflare.com,AI
+  - DOMAIN-SUFFIX,cursor.sh,AI
+
+  - DOMAIN-SUFFIX,hyperliquid.xyz,Crypto
+  - DOMAIN-SUFFIX,kraken.com,Crypto
+  - DOMAIN-SUFFIX,dune.com,Crypto
+
+  - DOMAIN-SUFFIX,podcasts.apple.com,Choose
+  - DOMAIN-SUFFIX,linkedin.com,Choose
+
+  # work
+  - DOMAIN-SUFFIX,mycompany.com,DIRECT
+  - DOMAIN-SUFFIX,feishu.cn,DIRECT
+  - IP-CIDR,10.0.0.0/8,DIRECT
+
+  - GEOIP,CN,DIRECT
+  - MATCH,Choose
+
+mixed-port: 7890
+redir-port: 7892
+
+allow-lan: true
+
+mode: rule
+
+log-level: info
+external-controller: '0.0.0.0:9090'
+external-ui: 'ui'
+
+secret: 'your-secret-here'
+ipv6: false
+keep-alive-interval: 15
+keep-alive-idle: 15
+
+tun:
+  enable: true
+  stack: mixed
+  dns-hijack:
+    - "any:53"
+    - "tcp://any:53"
+  auto-route: true
+  auto-redirect: true
+  auto-detect-interface: true
+  
+sniffer:
+  enable: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+      override-destination: true
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+  skip-domain:
+    - "+.push.apple.com"
+    
+dns:
+  enable: true
+  ipv6: false
+  listen: '0.0.0.0:53'
+  use-hosts: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  default-nameserver:
+    - 114.114.114.114
+    - 119.29.29.29
+  nameserver:
+    - 114.114.114.114
+    - 223.5.5.5
+  fallback:
+    - 'https://223.5.5.5/dns-query'
+    - 'https://cloudflare-dns.com/dns-query'
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    ipcidr:
+      - 240.0.0.0/4
+  fake-ip-filter:
+  - "*"
+  - "+.lan"
+  - "+.local"
+  
+hosts:
+  '*.clash.dev': 127.0.0.1
+  'alpha.clash.dev': '::1'
+
+proxy-providers:
+  
+  provider-a:
+    type: http
+    path: ./profiles/provider-a.yaml
+    url: https://example.com/api/v1/subscribe?token=your-token-here
+    interval: 3600
+    health-check:
+      enable: true
+      url: http://www.gstatic.com/generate_204
+      interval: 1800
+    exclude-filter: "(?i)剩余流量|距离下次重置|套餐到期"
+  
+  provider-b:
+    type: http
+    path: ./profiles/provider-b.yaml
+    url: https://example2.com/api/v1/subscribe?token=your-token-here
+    interval: 3600
+    health-check:
+      enable: true
+      url: http://www.gstatic.com/generate_204
+      interval: 1800
+    exclude-filter: "(?i)剩余流量|距离下次重置|套餐到期"  
+
+proxies:
+  - name: 🇺🇸 us-server-1
+    password: "your-password"
+    port: 443
+    server: us1.example.com
+    type: trojan
+    network: tcp
+    
+  - name: 🇺🇸 us-server-1 (SS)
+    password: "your-password"
+    port: 58388
+    server: us1.example.com
+    type: ss
+    cipher: aes-256-gcm
+    udp: true
+    dialer-proxy: Dialer
+    
+  - name: 🇺🇸 us-server-2 (SS)
+    password: "your-password"
+    port: 58388
+    server: us2.example.com
+    type: ss
+    cipher: aes-256-gcm
+    udp: true
+    dialer-proxy: Dialer
+    
+  - name: 🇺🇸 us-server-2
+    password: "your-password"
+    port: 443
+    server: us2.example.com
+    type: trojan
+    network: tcp
+
+  - name: 🇯🇵 jp-server-1
+    type: trojan
+    server: jp1.example.com
+    port: 443
+    password: "your-password"
+    network: tcp
+    
+  - name: 🇯🇵 jp-server-1 (SS)
+    type: trojan
+    server: jp1.example.com
+    port: 443
+    password: "your-password"
+    network: tcp
+
+  - name: 🇰🇷 kr-server-1
+    type: trojan
+    server: kr1.example.com
+    port: 443
+    password: "your-password"
+    network: tcp
+
+  - name: 🇰🇷 kr-server-1 (SS)
+    type: ss
+    server: kr1.example.com
+    port: 58388
+    password: "your-password"
+    cipher: aes-256-gcm
+    udp: true
+    dialer-proxy: Dialer
+
+  - name: 🇯🇵 jp-server-2
+    type: trojan
+    server: jp2.example.com
+    port: 8443
+    password: "another-password"
+    network: tcp
+
+  - name: 🇸🇬 sg-server-1
+    type: trojan
+    server: sg1.example.com
+    port: 443
+    password: "another-password"
+    network: tcp
+    
+proxy-groups:
+  - name: Choose
+    type: select
+    proxies:
+      - Auto
+      - Naive
+      - Proxy Chain
+      - 🇭🇰 Hong Kong
+      - 🇯🇵 Japan
+      - 🇹🇼 Taiwan
+      - 🇸🇬 Singapore
+      - 🇺🇸 United States
+      - All Nodes
+      
+  - name: Naive
+    type: select
+    proxies:
+      - 🇺🇸 us-server-1
+      - 🇯🇵 jp-server-1
+      - 🇯🇵 jp-server-2
+      - 🇰🇷 kr-server-1
+      - 🇸🇬 sg-server-1
+      - 🇺🇸 us-server-2
+      
+  - name: Proxy Chain
+    type: select
+    proxies:
+      - 🇺🇸 us-server-1 (SS)
+      - 🇯🇵 jp-server-1 (SS)
+      - 🇺🇸 us-server-2 (SS)
+      - 🇰🇷 kr-server-1 (SS)
+
+  - name: Dialer
+    type: select
+    proxies:
+      - 🇭🇰 Hong Kong
+      - 🇯🇵 Japan
+      - 🇹🇼 Taiwan
+      - 🇸🇬 Singapore
+      - 🇺🇸 United States
+      - DIRECT
+
+  - name: 🇸🇬 Singapore
+    use:
+      - provider-a
+      - provider-b
+    type: url-test
+    url: 'http://www.gstatic.com/generate_204'
+    interval: 300
+    tolerance: 50
+    filter: "(?i)(新|sg|singapore|🇸🇬)"
+ 
+  - name: 🇯🇵 Japan
+    type: url-test
+    url: 'http://www.gstatic.com/generate_204'
+    interval: 300
+    tolerance: 50
+    use:
+      - provider-a
+      - provider-b
+    filter: "(?i)(日|jp|ja|🇯🇵)"
+
+  - name: 🇹🇼 Taiwan
+    type: url-test
+    url: 'http://www.gstatic.com/generate_204'
+    interval: 300
+    tolerance: 50
+    use:
+      - provider-a
+      - provider-b
+    filter: "(?i)(台|tw|tai|🇹🇼)"
+ 
+  - name: 🇺🇸 United States
+    type: url-test
+    url: 'http://www.gstatic.com/generate_204'
+    interval: 300
+    tolerance: 50
+    use:
+      - provider-a
+      - provider-b
+    filter: "(?i)(states|美|us|🇺🇸)"
+
+  - name: 🇭🇰 Hong Kong
+    type: url-test
+    url: 'http://www.gstatic.com/generate_204'
+    interval: 300
+    tolerance: 50
+    use:
+      - provider-a
+      - provider-b
+    filter: "(?i)(港|hk|hong|🇭🇰)"
+     
+  - name: All Nodes
+    type: select
+    use:
+      - provider-a
+      - provider-b
+    filter: "(?i)^(?!.*traffic|expire|剩余|到期).*$"
+  
+  - name: Crypto
+    type: select
+    proxies:
+      - Choose
+      - 🇹🇼 Taiwan
+      - 🇸🇬 Singapore
+      - 🇯🇵 Japan
+
+  - name: AI
+    type: select
+    proxies:
+      - Choose
+      - 🇹🇼 Taiwan
+      - 🇸🇬 Singapore
+      - 🇯🇵 Japan
+      - 🇺🇸 United States
+
+  - name: GlobalCompany
+    type: select
+    proxies:
+      - DIRECT
+      - Choose
+
+  - name: Auto
+    type: url-test
+    url: 'http://www.gstatic.com/generate_204'
+    interval: 302
+    tolerance: 50
+    use:
+      - provider-a
+      - provider-b
+    filter: "(?i)^(?!.*traffic|expire|剩余|到期).*$"
+
+rule-providers:
+  Gemini:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/Gemini/Gemini.yaml"
+    interval: 86400
+    path: ./ruleset/Gemini.yaml
+
+  OpenAI:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/OpenAI/OpenAI.yaml"
+    interval: 86400
+    path: ./ruleset/OpenAI.yaml
+
+  Anthropic:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/Anthropic/Anthropic.yaml"
+    interval: 86400
+    path: ./ruleset/Anthropic.yaml
+
+  Apple:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Apple/Apple.yaml"
+    interval: 86400
+    path: ./ruleset/Apple.yaml
+
+  Microsoft:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Microsoft/Microsoft.yaml"
+    interval: 86400
+    path: ./ruleset/Microsoft.yaml
+
+  China:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/China/China.yaml"
+    interval: 86400
+    path: ./ruleset/China.yaml
+
+  BiliBili:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/BiliBili/BiliBili.yaml"
+    interval: 86400
+    path: ./ruleset/BiliBili.yaml
+
+  OKX:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/OKX/OKX.yaml"
+    interval: 86400
+    path: ./ruleset/OKX.yaml
+
+  Binance:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Binance/Binance.yaml"
+    interval: 86400
+    path: ./ruleset/Binance.yaml
+    
+  Tencent:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Providers/Ruleset/Tencent.yaml"
+    interval: 86400
+    path: ./ruleset/Tencent.yaml
