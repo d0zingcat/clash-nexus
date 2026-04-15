@@ -2,19 +2,29 @@
 
 将 Clash (mihomo) YAML 配置文件转换为 [Loon](https://nsloon.app) `.conf` 配置文件。
 
+Go 实现，无需安装任何运行环境，直接下载二进制即可使用。
+
 ## 快速开始
 
+### 直接编译使用
+
 ```bash
-pip install -r requirements.txt
-python3 converter.py
+go build -o converter .
+./converter input/clash.yaml -o output/loon.conf
 ```
 
-默认读取 `input/all-in-one.yaml`，输出到 `output/loon.conf`。
+### 默认路径
+
+不带参数时，默认读取 `input/all-in-one.yaml`，输出到 `output/loon.conf`：
+
+```bash
+./converter
+```
 
 也可以指定路径：
 
 ```bash
-python3 converter.py path/to/clash.yaml -o path/to/output.conf
+./converter path/to/clash.yaml -o path/to/output.conf
 ```
 
 ## 支持的转换
@@ -54,12 +64,13 @@ python3 converter.py path/to/clash.yaml -o path/to/output.conf
 ## 目录结构
 
 ```
-├── input/           # Clash 源配置
-│   └── all-in-one.yaml
-├── output/          # 生成的 Loon 配置（gitignore）
+├── main.go          # 转换器源码（Go）
+├── go.mod / go.sum  # Go 模块依赖
+├── input/           # Clash 源配置（all-in-one.yaml 不纳入版本控制）
+│   └── example.yaml # 脱敏示例配置
+├── output/          # 生成的 Loon 配置（不纳入版本控制）
 │   └── loon.conf
-├── converter.py     # 转换脚本
-└── requirements.txt
+└── docs/            # 设计文档
 ```
 
 ## 不支持 / 需手动处理
