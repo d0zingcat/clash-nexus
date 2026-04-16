@@ -143,6 +143,34 @@ func toOrderedMap(v interface{}) ([]string, map[string]interface{}) {
 	return keys, m
 }
 
+// orderedKeysFromNode extracts the keys of a top-level mapping field in the
+// given yaml.Node document, preserving the original YAML document order.
+func orderedKeysFromNode(root *yaml.Node, field string) []string {
+	if root == nil {
+		return nil
+	}
+	doc := root
+	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 {
+		doc = doc.Content[0]
+	}
+	if doc.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(doc.Content); i += 2 {
+		if doc.Content[i].Value == field {
+			node := doc.Content[i+1]
+			if node.Kind == yaml.MappingNode {
+				keys := make([]string, 0, len(node.Content)/2)
+				for j := 0; j+1 < len(node.Content); j += 2 {
+					keys = append(keys, node.Content[j].Value)
+				}
+				return keys
+			}
+		}
+	}
+	return nil
+}
+
 func boolStr(b bool) string {
 	if b {
 		return "true"
@@ -649,7 +677,11 @@ func convertProxyChains(proxies []map[string]interface{}) (string, map[string]st
 		}
 		name := mapGetStr(p, "name", "")
 		chainName := name + " (Chain)"
-		lines = append(lines, fmt.Sprintf("%s = %s,%s,udp=true", chainName, name, dialer))
+		// In Loon Proxy Chain the proxies are listed first-hop to last-hop.
+		// Clash dialer-proxy means the named proxy's TCP connection goes out
+		// through the dialer, so the actual path is: client → dialer → proxy
+		// server → destination.  List dialer first, then the proxy node.
+		lines = append(lines, fmt.Sprintf("%s = %s,%s,udp=true", chainName, dialer, name))
 		chainMap[name] = chainName
 	}
 	return strings.Join(lines, "\n"), chainMap
@@ -842,7 +874,7 @@ func convertRulesAndRemoteRules(rules []interface{}, ruleProviders map[string]in
 				if strings.Contains(rawURL, "ACL4SSR") {
 					remoteLines = append(remoteLines, "# [NOTE] ACL4SSR URL — verify Loon compatibility")
 				}
-				remoteLines = append(remoteLines, fmt.Sprintf("%s,policy=%s,enabled=true", loonURL, policy))
+				remoteLines = append(remoteLines, fmt.Sprintf("%s,policy=%s,tag=%s,enabled=true", loonURL, policy, rpName))
 				seenRemote[rpName] = true
 			}
 
@@ -910,7 +942,7 @@ func convertHosts(hosts map[string]interface{}, nameserverPolicy map[string]inte
 // Main assembly
 // ---------------------------------------------------------------------------
 
-func convert(config map[string]interface{}) string {
+func convert(config map[string]interface{}, root *yaml.Node) string {
 	sections := []string{}
 
 	sections = append(sections, convertGeneral(config))
@@ -921,10 +953,14 @@ func convert(config map[string]interface{}) string {
 	proxyChainText, chainMap := convertProxyChains(proxies)
 	sections = append(sections, proxyChainText)
 
-	// proxy-providers — preserve insertion order using yaml node if available
-	providerOrder, providersMap := toOrderedMap(config["proxy-providers"])
+	// proxy-providers — preserve insertion order via yaml.Node
+	providerOrder := orderedKeysFromNode(root, "proxy-providers")
+	_, providersMap := toOrderedMap(config["proxy-providers"])
 	if providersMap == nil {
 		providersMap = map[string]interface{}{}
+	}
+	if len(providerOrder) == 0 {
+		providerOrder, _ = toOrderedMap(config["proxy-providers"])
 	}
 	sections = append(sections, convertRemoteProxy(providersMap, providerOrder))
 
@@ -934,11 +970,14 @@ func convert(config map[string]interface{}) string {
 	sections = append(sections, convertProxyGroups(groups, chainMap))
 
 	rules, _ := config["rules"].([]interface{})
-	ruleProviderOrder, ruleProvidersMap := toOrderedMap(config["rule-providers"])
+	ruleProviderOrder := orderedKeysFromNode(root, "rule-providers")
+	_, ruleProvidersMap := toOrderedMap(config["rule-providers"])
 	if ruleProvidersMap == nil {
 		ruleProvidersMap = map[string]interface{}{}
 	}
-	_ = ruleProviderOrder
+	if len(ruleProviderOrder) == 0 {
+		ruleProviderOrder, _ = toOrderedMap(config["rule-providers"])
+	}
 	ruleText, remoteRuleText := convertRulesAndRemoteRules(rules, ruleProvidersMap, ruleProviderOrder)
 	sections = append(sections, ruleText)
 	sections = append(sections, remoteRuleText)
@@ -1023,7 +1062,10 @@ func main() {
 		config = map[string]interface{}{}
 	}
 
-	result := convert(config)
+	var rootNode yaml.Node
+	_ = yaml.Unmarshal(data, &rootNode)
+
+	result := convert(config, &rootNode)
 
 	outPath := *outputFlag
 	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
