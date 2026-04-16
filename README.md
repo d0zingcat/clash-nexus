@@ -13,14 +13,6 @@ go build -o converter .
 ./converter input/clash.yaml -o output/loon.conf
 ```
 
-### 默认路径
-
-不带参数时，默认读取 `input/all-in-one.yaml`，输出到 `output/loon.conf`：
-
-```bash
-./converter
-```
-
 也可以指定路径：
 
 ```bash

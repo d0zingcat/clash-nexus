@@ -972,12 +972,29 @@ func convert(config map[string]interface{}) string {
 // ---------------------------------------------------------------------------
 
 func main() {
-	inputFlag := flag.String("input", "", "Path to Clash YAML config file (default: input/all-in-one.yaml)")
-	outputFlag := flag.String("o", "output/loon.conf", "Output Loon config file path")
+	const defaultOutputPath = "output/loon.conf"
+
+	inputFlag := flag.String("input", "", "Path to Clash YAML config file")
+	outputFlag := flag.String("o", defaultOutputPath, "Output Loon config file path")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] [input_file]\n\nOptions:\n", os.Args[0])
+		cmd := filepath.Base(os.Args[0])
+		fmt.Fprintf(os.Stderr, "Convert Clash (mihomo) YAML config into a Loon .conf file.\n\n")
+		fmt.Fprintf(os.Stderr, "Usage:\n")
+		fmt.Fprintf(os.Stderr, "  %s [options] [input_file]\n\n", cmd)
+		fmt.Fprintf(os.Stderr, "Input selection:\n")
+		fmt.Fprintf(os.Stderr, "  1. Use -input when provided\n")
+		fmt.Fprintf(os.Stderr, "  2. Otherwise use positional [input_file]\n")
+		fmt.Fprintf(os.Stderr, "  3. Input is required\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nExample:\n  %s input/clash.yaml -o output/loon.conf\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nDefaults:\n")
+		fmt.Fprintf(os.Stderr, "  output %s\n\n", defaultOutputPath)
+		fmt.Fprintf(os.Stderr, "Examples:\n")
+		fmt.Fprintf(os.Stderr, "  %s input/clash.yaml\n", cmd)
+		fmt.Fprintf(os.Stderr, "  %s -input input/clash.yaml -o output/custom.conf\n\n", cmd)
+		fmt.Fprintf(os.Stderr, "Output:\n")
+		fmt.Fprintf(os.Stderr, "  Creates parent directories for the output file when needed.\n")
+		fmt.Fprintf(os.Stderr, "  Prints a single conversion summary line after success.\n")
 	}
 	flag.Parse()
 
@@ -986,7 +1003,8 @@ func main() {
 		inputPath = flag.Arg(0)
 	}
 	if inputPath == "" {
-		inputPath = "input/all-in-one.yaml"
+		flag.Usage()
+		os.Exit(0)
 	}
 
 	data, err := os.ReadFile(inputPath)
