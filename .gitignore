@@ -8,7 +8,7 @@ build/
 venv/
 
 # Go binary
-converter
+clash-nexus
 
 # Output
 output/
