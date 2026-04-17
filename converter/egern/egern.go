@@ -3,6 +3,7 @@ package egern
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -356,10 +357,8 @@ func buildEgernProxies(proxies []map[string]interface{}) []map[string]interface{
 		case "http":
 			entry = convertHTTPToEgern(p)
 		default:
-			// Unsupported (e.g. ssr, tuic, wireguard need manual handling)
 			name := clash.MapGetStr(p, "name", "?")
-			_ = name
-			// Skip unsupported types silently (they get a comment if we had text output)
+			fmt.Fprintf(os.Stderr, "[WARNING] skipping proxy %q (type: %s) — not supported by Egern\n", name, ptype)
 			continue
 		}
 		if entry != nil {
