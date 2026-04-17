@@ -31,7 +31,7 @@ targets = append(targets, k)
 sort.Strings(targets)
 targetHelp := strings.Join(targets, ", ")
 
-targetFlag := flag.String("target", "loon", "Output format: "+targetHelp)
+targetFlag := flag.String("target", "", "Output format (required): "+targetHelp)
 inputFlag := flag.String("input", "", "Path to Clash YAML config file")
 outputFlag := flag.String("o", "", "Output file path (default: output/<target><ext>)")
 
@@ -39,7 +39,7 @@ flag.Usage = func() {
 cmd := filepath.Base(os.Args[0])
 fmt.Fprintf(os.Stderr, "Convert Clash (mihomo) YAML config into various formats.\n\n")
 fmt.Fprintf(os.Stderr, "Usage:\n")
-fmt.Fprintf(os.Stderr, "  %s [options] [input_file]\n\n", cmd)
+fmt.Fprintf(os.Stderr, "  %s -target <target> [options] [input_file]\n\n", cmd)
 fmt.Fprintf(os.Stderr, "Input selection (in priority order):\n")
 fmt.Fprintf(os.Stderr, "  1. -input flag\n")
 fmt.Fprintf(os.Stderr, "  2. Positional [input_file] argument\n\n")
@@ -47,7 +47,6 @@ fmt.Fprintf(os.Stderr, "Options:\n")
 flag.PrintDefaults()
 fmt.Fprintf(os.Stderr, "\nAvailable targets: %s\n\n", targetHelp)
 fmt.Fprintf(os.Stderr, "Examples:\n")
-fmt.Fprintf(os.Stderr, "  %s input/clash.yaml\n", cmd)
 fmt.Fprintf(os.Stderr, "  %s -target egern input/clash.yaml\n", cmd)
 fmt.Fprintf(os.Stderr, "  %s -target loon -input input/clash.yaml -o output/custom.conf\n\n", cmd)
 fmt.Fprintf(os.Stderr, "Output:\n")
@@ -61,9 +60,11 @@ inputPath := *inputFlag
 if inputPath == "" && flag.NArg() > 0 {
 inputPath = flag.Arg(0)
 }
-if inputPath == "" {
+
+// Both -target and input are required; show usage if either is missing.
+if *targetFlag == "" || inputPath == "" {
 flag.Usage()
-os.Exit(0)
+os.Exit(1)
 }
 
 // Resolve converter.
