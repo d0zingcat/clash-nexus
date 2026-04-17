@@ -922,8 +922,15 @@ func buildEgernRules(
 		if len(parts) > 2 {
 			policy = parts[2]
 		}
+		// MATCH/FINAL format is "MATCH,<policy>" (2 parts) — parts[1] is the policy, not a match value.
+		if (ruleType == "MATCH" || ruleType == "FINAL") && policy == "" {
+			policy = match
+			match = ""
+		}
+		// Detect optional no-resolve flag (e.g. GEOIP,CN,DIRECT,no-resolve).
+		noResolve := len(parts) > 3 && strings.EqualFold(parts[len(parts)-1], "no-resolve")
 
-		entry := convertRuleToEgern(ruleType, match, policy, providerURLs)
+		entry := convertRuleToEgern(ruleType, match, policy, noResolve, providerURLs)
 		if entry != nil {
 			out = append(out, entry)
 		}
@@ -932,7 +939,7 @@ func buildEgernRules(
 	return out
 }
 
-func convertRuleToEgern(ruleType, match, policy string, providerURLs map[string]string) map[string]interface{} {
+func convertRuleToEgern(ruleType, match, policy string, noResolve bool, providerURLs map[string]string) map[string]interface{} {
 	inner := func(egernType string, extra ...map[string]interface{}) map[string]interface{} {
 		m := map[string]interface{}{
 			"match":  match,
@@ -958,10 +965,6 @@ func convertRuleToEgern(ruleType, match, policy string, providerURLs map[string]
 	case "DOMAIN-WILDCARD":
 		return inner("domain_wildcard")
 	case "GEOIP":
-		noResolve := false
-		if policy == "" && match != "" {
-			// Sometimes policy is the 3rd field; GEOIP might have no-resolve as extra flag
-		}
 		m := map[string]interface{}{
 			"match":  match,
 			"policy": policy,
