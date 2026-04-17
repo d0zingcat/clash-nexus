@@ -2,12 +2,16 @@
 package main
 
 import (
+	"encoding/base64"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -691,6 +695,83 @@ func convertProxyChains(proxies []map[string]interface{}) (string, map[string]st
 // Unit 4: [Remote Proxy] + [Remote Filter]
 // ---------------------------------------------------------------------------
 
+// proxyURIPrefixes are the URI schemes used by standard proxy subscriptions.
+var proxyURIPrefixes = []string{
+	"ss://", "ssr://", "vmess://", "vless://", "trojan://",
+	"hysteria://", "hysteria2://", "hy2://", "tuic://",
+	"socks5://", "http://", "https://",
+}
+
+// fullConfigKeys are top-level YAML keys that only appear in full client configs
+// (not in a proxies-only subscription YAML).
+var fullConfigKeys = []string{
+	"rules", "proxy-groups", "rule-providers", "listeners",
+	"sub-rules", "dns", "tun", "mixed-port", "mode",
+}
+
+// checkProxySubscription fetches the URL and returns a warning if the content
+// is not a standard proxy subscription (base64 URI list or proxies-only YAML).
+// Returns empty string if the subscription looks valid.
+func checkProxySubscription(rawURL string) string {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		return fmt.Sprintf("failed to fetch subscription URL: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Sprintf("subscription URL returned HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024)) // 2 MB cap
+	if err != nil {
+		return fmt.Sprintf("failed to read subscription content: %v", err)
+	}
+
+	content := strings.TrimSpace(string(body))
+
+	// Try base64 decode first — standard URI-list subscriptions are base64-encoded.
+	decoded, b64Err := base64.StdEncoding.DecodeString(content)
+	if b64Err != nil {
+		// Some encoders omit padding; try without padding.
+		decoded, b64Err = base64.RawStdEncoding.DecodeString(content)
+	}
+	if b64Err == nil {
+		lines := strings.Split(strings.TrimSpace(string(decoded)), "\n")
+		validCount := 0
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			for _, prefix := range proxyURIPrefixes {
+				if strings.HasPrefix(line, prefix) {
+					validCount++
+					break
+				}
+			}
+		}
+		if validCount > 0 {
+			return "" // valid base64 proxy URI list
+		}
+	}
+
+	// Try YAML parse — could be a proxies-only YAML or a full client config.
+	var yamlMap map[string]interface{}
+	if yamlErr := yaml.Unmarshal(body, &yamlMap); yamlErr == nil && yamlMap != nil {
+		for _, key := range fullConfigKeys {
+			if _, found := yamlMap[key]; found {
+				return fmt.Sprintf("subscription returns a full client config (contains '%s' key); provide a standard proxy-only subscription instead", key)
+			}
+		}
+		if _, hasProxies := yamlMap["proxies"]; hasProxies {
+			return "" // valid proxies-only YAML
+		}
+		return "subscription YAML has no 'proxies' key; provide a standard proxy-only subscription instead"
+	}
+
+	return "subscription content is neither a valid base64 proxy URI list nor a proxies-only YAML"
+}
+
 func convertRemoteProxy(providers map[string]interface{}, providerOrder []string) string {
 	lines := []string{"[Remote Proxy]"}
 	for _, alias := range providerOrder {
@@ -699,8 +780,13 @@ func convertRemoteProxy(providers map[string]interface{}, providerOrder []string
 		if !ok {
 			continue
 		}
-		url := mapGetStr(cfg, "url", "")
-		lines = append(lines, fmt.Sprintf("%s = %s", alias, url))
+		rawURL := mapGetStr(cfg, "url", "")
+		if rawURL != "" {
+			if warn := checkProxySubscription(rawURL); warn != "" {
+				lines = append(lines, fmt.Sprintf("# [WARNING] %s: %s", alias, warn))
+			}
+		}
+		lines = append(lines, fmt.Sprintf("%s = %s", alias, rawURL))
 		if ef := mapGetStr(cfg, "exclude-filter", ""); ef != "" {
 			lines = append(lines, fmt.Sprintf("# [NOTE] exclude-filter for %s: %s  (apply via Remote Filter if needed)", alias, ef))
 		}
