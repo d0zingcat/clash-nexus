@@ -52,6 +52,30 @@ go build -o converter .
 - `dialer-proxy` 节点自动生成 `[Proxy Chain]` 条目，策略组中的引用同步替换
 - `proxy-providers` 的 `filter` 正则自动转为 `[Remote Filter]` 的 `NameRegex`
 - 配置 SubStore 解析器以兼容各类订阅格式
+- 转换时自动拉取每个 `proxy-providers` 的订阅 URL，校验内容是否为**通用节点格式**（见下文注意事项）
+
+## 注意事项
+
+### proxy-providers 订阅链接须为通用节点格式
+
+`proxy-providers` 的 `url` 必须指向**通用节点订阅**，即返回以下两种内容之一：
+
+- **Base64 编码的代理 URI 列表**：每行一条节点链接（`ss://`、`vless://`、`trojan://`、`vmess://` 等）经 Base64 整体编码
+- **仅含 `proxies:` 字段的 YAML**：不含 `rules`、`proxy-groups`、`dns` 等完整客户端配置字段
+
+**❌ 不要使用**针对特定代理软件生成的完整配置链接，例如：
+
+```
+# 错误：Clash 专属订阅链接
+https://example.com/subscribe?token=xxx&clash=1
+https://example.com/subscribe?token=xxx&flag=clash
+
+# 错误：返回包含 rules/proxy-groups 的完整 Clash 配置
+```
+
+这类链接返回的是带有 `rules`、`proxy-groups` 的完整客户端配置，Loon 作为 `[Remote Proxy]` 订阅会**无法解析节点**。
+
+转换时若检测到订阅内容不合规，输出文件中会在对应条目上方输出 `# [WARNING]` 提示。
 
 ## 目录结构
 
