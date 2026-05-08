@@ -152,13 +152,15 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 | `proxy-groups` (url-test) | `policy_groups[].auto_test` | 自动测速策略组 |
 | `proxy-groups` (load-balance) | `policy_groups[].load_balance` | 负载均衡策略组 |
 | `dialer-proxy` | `prev_hop` | 节点上的代理链字段 |
+| `mixed-port` | `http_port` | Egern 无混合端口；不会同时写入 `socks_port` |
+| `port` / `socks-port` | `http_port` / `socks_port` | 仅在 Clash 明确分开配置时分别映射 |
 | `rules` | `rules` | 路由规则 |
-| `rule-providers` (RULE-SET) | `rules[].rule_set` | 规则集，match 为订阅 URL |
+| `rule-providers` (RULE-SET) | `rules[].rule_set` | 规则集，blackmatrix7 的 Clash URL 自动转为 Surge URL |
 | `MATCH`/`FINAL` | `rules[].default` | 默认策略 |
 | `dns.default-nameserver` | `dns.bootstrap` | 用于解析 DoH 域名的 UDP DNS |
 | `dns.nameserver` | `dns.upstreams.default` | 默认 DNS 上游 |
 | `dns.fallback` (DoH/DoT/DoQ) | `dns.upstreams.doh/dot/doq` | 加密 DNS 上游 |
-| `dns.fake-ip-filter` | `real_ip_domains` | Real IP 域名（`*` 被过滤） |
+| `dns.fake-ip-filter` | `real_ip_domains` | Real IP 域名（`*` 被过滤，`+.` 转为 `*.`） |
 | `hosts` | `dns.hosts` | 静态域名映射 |
 
 ## 注意事项
@@ -180,6 +182,10 @@ https://example.com/subscribe?token=xxx&flag=clash
 
 转换时若检测到订阅内容不合规，输出文件中会在对应条目上方输出 `# [WARNING]` 提示。
 
+### Egern 的 rule-providers 使用 Surge 规则集
+
+blackmatrix7 仓库没有 `rule/Egern` 目录。Egern 官方 FAQ 说明目前支持 Surge rule set，因此转换 blackmatrix7 的 `rule/Clash/.../*.yaml` 时会自动改写为 `rule/Surge/.../*.list`。
+
 ### 不支持 / 需手动处理
 
 **Loon：**
@@ -190,6 +196,7 @@ https://example.com/subscribe?token=xxx&flag=clash
 **Egern：**
 - SSR 节点：Egern 不支持，转换时跳过并输出 stderr 警告
 - tuic、wireguard 等协议：同上
+- 非 blackmatrix7 的 Clash 格式远程规则集：需自行确认 Egern 是否支持，必要时替换为 Surge 规则集
 - Clash 的 `tun`、`sniffer` 段（Egern 侧自行配置）
 
 ## 目录结构

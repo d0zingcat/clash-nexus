@@ -82,6 +82,42 @@ func TestConvertJSONURL(t *testing.T) {
 	assertConverted(t, resp, "egern")
 }
 
+func TestConvertJSONReturnsWarnings(t *testing.T) {
+	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
+	defer ts.Close()
+
+	resp := postJSON(t, ts.URL+"/api/convert", map[string]string{
+		"target": "egern",
+		"yaml": `
+rule-providers:
+  Tencent:
+    url: https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Providers/Ruleset/Tencent.yaml
+rules:
+  - RULE-SET,Tencent,DIRECT
+  - MATCH,Proxy
+`,
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want %d; body=%s", resp.StatusCode, http.StatusOK, data)
+	}
+
+	var body struct {
+		Warnings []string `json:"warnings"`
+		Content  string   `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Warnings) != 1 || !strings.Contains(body.Warnings[0], "blackmatrix7") {
+		t.Fatalf("warnings = %#v, want blackmatrix7 warning", body.Warnings)
+	}
+	if strings.Contains(body.Content, "ACL4SSR") {
+		t.Fatalf("content still contains skipped ACL4SSR rule-set: %s", body.Content)
+	}
+}
+
 func TestSubscribe(t *testing.T) {
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, testConfig)

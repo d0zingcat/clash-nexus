@@ -28,9 +28,9 @@ func (c *Converter) Name() string { return "loon" }
 func (c *Converter) DefaultExtension() string { return ".conf" }
 
 // Convert transforms a Clash config map into a Loon .conf byte slice.
-func (c *Converter) Convert(config map[string]interface{}, root *yaml.Node) ([]byte, error) {
+func (c *Converter) Convert(config map[string]interface{}, root *yaml.Node) ([]byte, []string, error) {
 	result := convert(config, root)
-	return []byte(result), nil
+	return []byte(result), nil, nil
 }
 
 // ---------------------------------------------------------------------------

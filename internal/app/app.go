@@ -98,10 +98,11 @@ func (s *Service) ConvertBytes(target string, data []byte) (Result, error) {
 	var rootNode yaml.Node
 	_ = yaml.Unmarshal(data, &rootNode)
 
-	content, err := conv.Convert(config, &rootNode)
+	content, convertWarnings, err := conv.Convert(config, &rootNode)
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %v", ErrConvertFailed, err)
 	}
+	warnings = append(warnings, convertWarnings...)
 
 	return Result{
 		Target:    conv.Name(),

@@ -14,5 +14,5 @@ type Converter interface {
 	// Convert transforms the parsed Clash config map and its underlying YAML
 	// node tree into the target format. The YAML node tree is provided so
 	// converters can preserve key insertion order when needed.
-	Convert(config map[string]interface{}, root *yaml.Node) ([]byte, error)
+	Convert(config map[string]interface{}, root *yaml.Node) ([]byte, []string, error)
 }
