@@ -17,7 +17,69 @@ go build -o clash-nexus .
 
 # 指定输出路径
 ./clash-nexus -target loon -input input/clash.yaml -o output/custom.conf
+
+# 启动本地网页和转换 API
+./clash-nexus serve
 ```
+
+启动后打开 `http://127.0.0.1:8080`，可以粘贴 YAML、上传文件或输入远程 Clash 配置 URL，选择目标格式后预览并下载转换结果。
+
+## Web/API
+
+### 本地网页
+
+```bash
+pnpm install
+pnpm run web:build
+go build -o clash-nexus .
+./clash-nexus serve -addr 127.0.0.1:8080
+```
+
+默认只监听 `127.0.0.1`。网页使用 React + Tailwind + shadcn/ui 风格组件，`pnpm run web:build` 会把前端产物输出到 `internal/web/static/`，随后由 Go 二进制内置。
+
+### Docker
+
+```bash
+docker build -t clash-nexus .
+docker run --rm -p 8080:8080 clash-nexus
+```
+
+容器默认监听 `0.0.0.0:8080`，访问 `http://127.0.0.1:8080`。
+
+GitHub Actions 会在 `main` 分支和 `v*` tag 上构建并推送镜像到 GHCR：
+
+```text
+ghcr.io/<owner>/<repo>:latest
+ghcr.io/<owner>/<repo>:sha-<commit>
+ghcr.io/<owner>/<repo>:vX.Y.Z
+```
+
+### 转换接口
+
+```bash
+# 查看支持目标
+curl http://127.0.0.1:8080/api/targets
+
+# 通过粘贴 YAML 转换
+curl -X POST http://127.0.0.1:8080/api/convert \
+  -H 'Content-Type: application/json' \
+  -d '{"target":"loon","yaml":"rules:\n  - MATCH,DIRECT\n"}'
+
+# 通过远程 URL 转换
+curl -X POST http://127.0.0.1:8080/api/convert \
+  -H 'Content-Type: application/json' \
+  -d '{"target":"egern","url":"https://example.com/clash.yaml"}'
+
+# 可直接填入客户端的订阅转换地址
+curl 'http://127.0.0.1:8080/api/subscribe?target=loon&url=https%3A%2F%2Fexample.com%2Fclash.yaml'
+
+# 通过文件上传转换
+curl -X POST http://127.0.0.1:8080/api/convert/file \
+  -F target=loon \
+  -F file=@input/example.yaml
+```
+
+远程 URL 第一版只允许 `http` / `https`，请求超时为 10 秒，输入大小限制为 5 MiB。
 
 ## 支持的转换目标
 
@@ -161,4 +223,3 @@ https://example.com/subscribe?token=xxx&flag=clash
 - [Loon 手册](https://nsloon.app/docs/intro)
 - [Clash (mihomo) 配置文档](https://wiki.metacubex.one/en/config/)
 - [blackmatrix7 规则集](https://github.com/blackmatrix7/ios_rule_script)
-

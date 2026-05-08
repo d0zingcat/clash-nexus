@@ -1,0 +1,27 @@
+{
+  "type": "module",
+  "scripts": {
+    "web:dev": "./node_modules/.bin/vite --host 127.0.0.1",
+    "web:build": "./node_modules/.bin/vite build"
+  },
+  "dependencies": {
+    "@radix-ui/react-label": "^2.1.7",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwind-merge": "^2.6.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.1.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}
