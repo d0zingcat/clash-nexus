@@ -7,7 +7,7 @@ Go 实现，无需安装任何运行环境，直接下载二进制即可使用�
 ## 快速开始
 
 ```bash
-go build -o clash-nexus .
+make build
 
 # 转换为 Egern
 ./clash-nexus -target egern input/clash.yaml
@@ -19,7 +19,7 @@ go build -o clash-nexus .
 ./clash-nexus -target loon -input input/clash.yaml -o output/custom.conf
 
 # 启动本地网页和转换 API
-./clash-nexus serve
+make serve
 ```
 
 启动后打开 `http://127.0.0.1:8080`，可以粘贴 YAML、上传文件或输入远程 Clash 配置 URL，选择目标格式后预览并下载转换结果。
@@ -29,10 +29,8 @@ go build -o clash-nexus .
 ### 本地网页
 
 ```bash
-pnpm install
-pnpm run web:build
-go build -o clash-nexus .
-./clash-nexus serve -addr 127.0.0.1:8080
+make install
+make serve
 ```
 
 默认只监听 `127.0.0.1`。网页使用 React + Tailwind + shadcn/ui 风格组件，`pnpm run web:build` 会把前端产物输出到 `internal/web/static/`，随后由 Go 二进制内置。
@@ -40,8 +38,8 @@ go build -o clash-nexus .
 ### Docker
 
 ```bash
-docker build -t clash-nexus .
-docker run --rm -p 8080:8080 clash-nexus
+make docker-build
+make docker-run
 ```
 
 容器默认监听 `0.0.0.0:8080`，访问 `http://127.0.0.1:8080`。

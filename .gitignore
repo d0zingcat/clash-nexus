@@ -14,6 +14,10 @@ clash-nexus
 node_modules/
 .pnpm-store/
 
+# Local config / temp files
+/all-in-one.yaml
+/tmp/
+
 # Output
 output/
 
