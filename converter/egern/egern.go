@@ -148,6 +148,10 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 	if dnsCfg != nil {
 		nsPolicy, _ = dnsCfg["nameserver-policy"].(map[string]interface{})
 	}
+	_, ruleProvidersMap := clash.ToOrderedMap(config["rule-providers"])
+	if ruleProvidersMap == nil {
+		ruleProvidersMap = map[string]interface{}{}
+	}
 
 	if dnsCfg == nil && len(hostsMap) == 0 {
 		return nil
@@ -236,7 +240,8 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 		if nsPolicy != nil {
 			for pattern, dnsServerRaw := range nsPolicy {
 				pattern = strings.TrimSpace(pattern)
-				// Determine Egern upstream name for the target
+				// Determine Egern forward target. Egern accepts either an upstream
+				// group name or a DNS server address directly.
 				var targetUpstream string
 				var serverStr string
 				switch v := dnsServerRaw.(type) {
@@ -250,25 +255,37 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 				serverStr = strings.Trim(serverStr, `'"`)
 				if serverStr == "system" || serverStr == "" {
 					targetUpstream = "bootstrap"
-				} else if strings.HasPrefix(serverStr, "https://") {
-					targetUpstream = "doh"
-				} else if strings.HasPrefix(serverStr, "tls://") {
-					targetUpstream = "dot"
-				} else if strings.HasPrefix(serverStr, "quic://") {
-					targetUpstream = "doq"
 				} else {
-					targetUpstream = "default"
+					targetUpstream = serverStr
 				}
 
 				// Convert Clash pattern to Egern forward rule type
-				if strings.HasPrefix(pattern, "geosite:") || strings.HasPrefix(pattern, "rule-set:") {
+				if strings.HasPrefix(pattern, "geosite:") {
 					// Not directly supported; emit as comment via a note
 					forward = append(forward, map[string]interface{}{
 						"_note": fmt.Sprintf("# [WARNING] pattern not supported in Egern: %s", pattern),
 					})
 					continue
 				}
-				if strings.HasPrefix(pattern, "+.") {
+				if strings.HasPrefix(pattern, "rule-set:") {
+					ruleSet := strings.TrimSpace(strings.TrimPrefix(pattern, "rule-set:"))
+					if raw, ok := ruleProvidersMap[ruleSet]; ok {
+						if cfg, ok := raw.(map[string]interface{}); ok {
+							rawURL := clash.MapGetStr(cfg, "url", "")
+							if converted, ok := convertRuleProviderURL(rawURL); ok {
+								ruleSet = converted
+							} else if rawURL != "" {
+								ruleSet = rawURL
+							}
+						}
+					}
+					forward = append(forward, map[string]interface{}{
+						"proxy_rule_set": map[string]interface{}{
+							"match": ruleSet,
+							"value": targetUpstream,
+						},
+					})
+				} else if strings.HasPrefix(pattern, "+.") {
 					// +.cn → domain_suffix cn
 					suffix := pattern[2:]
 					forward = append(forward, map[string]interface{}{
@@ -485,14 +502,10 @@ func buildVmessVlessTransport(network string, tls bool, sni string, skipVerify b
 			}
 			if headers, ok := clash.MapGet[map[string]interface{}](wsOpts, "headers"); ok {
 				if host := clash.MapGetStr(headers, "Host", ""); host != "" {
-					if tls {
-						ws["sni"] = host
-					} else {
-						if ws["headers"] == nil {
-							ws["headers"] = map[string]interface{}{}
-						}
-						ws["headers"].(map[string]interface{})["Host"] = host
+					if ws["headers"] == nil {
+						ws["headers"] = map[string]interface{}{}
 					}
+					ws["headers"].(map[string]interface{})["Host"] = host
 				}
 			}
 		}
@@ -733,6 +746,14 @@ func buildEgernPolicyGroups(
 		}
 		return ""
 	}
+	providerInterval := func(name string) int {
+		if raw, ok := providersMap[name]; ok {
+			if cfg, ok := raw.(map[string]interface{}); ok {
+				return clash.MapGetInt(cfg, "interval", 0)
+			}
+		}
+		return 0
+	}
 
 	for _, g := range groups {
 		name := clash.MapGetStr(g, "name", "")
@@ -772,6 +793,12 @@ func buildEgernPolicyGroups(
 			if timeout > 0 {
 				ext["timeout"] = timeout
 			}
+			for _, u := range usesList {
+				if updateInterval := providerInterval(u); updateInterval > 0 {
+					ext["update_interval"] = updateInterval
+					break
+				}
+			}
 			out = append(out, map[string]interface{}{"external": ext})
 
 		} else if len(usesList) > 0 && len(proxiesList) > 0 {
@@ -788,6 +815,9 @@ func buildEgernPolicyGroups(
 					}
 					if subFilter != "" {
 						subExt["filter"] = subFilter
+					}
+					if updateInterval := providerInterval(u); updateInterval > 0 {
+						subExt["update_interval"] = updateInterval
 					}
 					out = append(out, map[string]interface{}{"external": subExt})
 					subGroupNames = append(subGroupNames, subName)
@@ -827,6 +857,9 @@ func buildEgernPolicyGroups(
 			"name": pname,
 			"type": "select",
 			"urls": []string{url},
+		}
+		if updateInterval := clash.MapGetInt(cfg, "interval", 0); updateInterval > 0 {
+			ext["update_interval"] = updateInterval
 		}
 		if ef := clash.MapGetStr(cfg, "filter", ""); ef != "" {
 			ext["filter"] = ef

@@ -63,6 +63,135 @@ func TestConvertDNSUsesOfficialWildcardFields(t *testing.T) {
 	}
 }
 
+func TestConvertDNSNameserverPolicyKeepsDedicatedServerAndRuleSet(t *testing.T) {
+	config := map[string]interface{}{
+		"dns": map[string]interface{}{
+			"default-nameserver": []interface{}{"223.5.5.5"},
+			"nameserver-policy": map[string]interface{}{
+				"+.example.com":   "https://1.1.1.1/dns-query",
+				"rule-set:Google": "system",
+			},
+		},
+		"rule-providers": map[string]interface{}{
+			"Google": map[string]interface{}{
+				"url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/Google/Google.yaml",
+			},
+		},
+	}
+
+	content, _, err := New().Convert(config, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+
+	var got map[string]interface{}
+	if err := yaml.Unmarshal(content, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	dnsCfg := got["dns"].(map[string]interface{})
+	forward := dnsCfg["forward"].([]interface{})
+
+	var foundDedicatedDNS bool
+	var foundRuleSet bool
+	for _, raw := range forward {
+		rule := raw.(map[string]interface{})
+		if domainSuffix, ok := rule["domain_suffix"].(map[string]interface{}); ok {
+			if domainSuffix["match"] == "example.com" && domainSuffix["value"] == "https://1.1.1.1/dns-query" {
+				foundDedicatedDNS = true
+			}
+		}
+		if proxyRuleSet, ok := rule["proxy_rule_set"].(map[string]interface{}); ok {
+			if proxyRuleSet["value"] == "bootstrap" && strings.Contains(proxyRuleSet["match"].(string), "/rule/Surge/Google/Google.list") {
+				foundRuleSet = true
+			}
+		}
+	}
+	if !foundDedicatedDNS {
+		t.Fatalf("forward = %#v, want domain_suffix using dedicated DNS server", forward)
+	}
+	if !foundRuleSet {
+		t.Fatalf("forward = %#v, want proxy_rule_set using converted provider URL", forward)
+	}
+}
+
+func TestConvertVmessWSSPreservesHostHeaderAndSNI(t *testing.T) {
+	config := map[string]interface{}{
+		"proxies": []interface{}{
+			map[string]interface{}{
+				"name":       "vmess-wss",
+				"type":       "vmess",
+				"server":     "proxy.example.com",
+				"port":       443,
+				"uuid":       "00000000-0000-0000-0000-000000000000",
+				"cipher":     "auto",
+				"network":    "ws",
+				"tls":        true,
+				"servername": "sni.example.com",
+				"ws-opts": map[string]interface{}{
+					"path": "/ws",
+					"headers": map[string]interface{}{
+						"Host": "host.example.com",
+					},
+				},
+			},
+		},
+	}
+
+	content, _, err := New().Convert(config, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+
+	var got map[string]interface{}
+	if err := yaml.Unmarshal(content, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	proxies := got["proxies"].([]interface{})
+	vmess := proxies[0].(map[string]interface{})["vmess"].(map[string]interface{})
+	wss := vmess["transport"].(map[string]interface{})["wss"].(map[string]interface{})
+	headers := wss["headers"].(map[string]interface{})
+
+	if headers["Host"] != "host.example.com" {
+		t.Fatalf("wss.headers.Host = %#v, want host.example.com", headers["Host"])
+	}
+	if wss["sni"] != "sni.example.com" {
+		t.Fatalf("wss.sni = %#v, want sni.example.com", wss["sni"])
+	}
+}
+
+func TestConvertProxyProviderIntervalToExternalUpdateInterval(t *testing.T) {
+	config := map[string]interface{}{
+		"proxy-providers": map[string]interface{}{
+			"provider-a": map[string]interface{}{
+				"url":      "https://example.com/sub",
+				"interval": 7200,
+			},
+		},
+		"proxy-groups": []interface{}{
+			map[string]interface{}{
+				"name": "Auto",
+				"type": "url-test",
+				"use":  []interface{}{"provider-a"},
+			},
+		},
+	}
+
+	content, _, err := New().Convert(config, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+
+	var got map[string]interface{}
+	if err := yaml.Unmarshal(content, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	groups := got["policy_groups"].([]interface{})
+	external := groups[0].(map[string]interface{})["external"].(map[string]interface{})
+	if external["update_interval"] != 7200 {
+		t.Fatalf("external.update_interval = %#v, want 7200", external["update_interval"])
+	}
+}
+
 func TestConvertRuleProviderURLUsesBlackmatrix7SurgeRules(t *testing.T) {
 	got, ok := convertRuleProviderURL("https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/Google/Google.yaml")
 	if !ok {

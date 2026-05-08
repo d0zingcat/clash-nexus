@@ -120,6 +120,22 @@ func convertGeneral(config map[string]interface{}) string {
 		lines = append(lines, "doq-server = "+strings.Join(doqServers, ","))
 	}
 
+	// DoH3 servers
+	doh3Servers := []string{}
+	seenDoh3 := map[string]bool{}
+	for _, src := range [][]string{getStringList("nameserver"), getStringList("fallback")} {
+		for _, ns := range src {
+			ns = strings.Trim(ns, `'"`)
+			if strings.HasPrefix(ns, "h3://") && !seenDoh3[ns] {
+				doh3Servers = append(doh3Servers, ns)
+				seenDoh3[ns] = true
+			}
+		}
+	}
+	if len(doh3Servers) > 0 {
+		lines = append(lines, "doh3-server = "+strings.Join(doh3Servers, ","))
+	}
+
 	if dnsCfg != nil {
 		if dnsCfg["proxy-server-nameserver"] != nil {
 			lines = append(lines, "# [NOTE] proxy-server-nameserver is Clash-specific, no Loon equivalent")
@@ -160,6 +176,9 @@ func convertGeneral(config map[string]interface{}) string {
 	for _, f := range fip {
 		f = strings.TrimSpace(f)
 		if f != "*" {
+			if strings.HasPrefix(f, "+.") {
+				f = "*." + strings.TrimPrefix(f, "+.")
+			}
 			realIPs = append(realIPs, f)
 		}
 	}
@@ -208,6 +227,9 @@ func convertTrojan(p map[string]interface{}) string {
 				}
 			}
 		}
+	} else if transport == "http" {
+		parts = append(parts, "transport=http")
+		appendHTTPTransportOpts(&parts, p)
 	}
 
 	parts = append(parts, "udp="+clash.BoolStr(clash.MapGetBool(p, "udp", true)))
@@ -358,6 +380,8 @@ func convertVless(p map[string]interface{}) string {
 				}
 			}
 		}
+	} else if transport == "http" {
+		appendHTTPTransportOpts(&parts, p)
 	}
 
 	tls := clash.MapGetBool(p, "tls", false)
@@ -479,6 +503,140 @@ func convertHTTP(p map[string]interface{}) string {
 	return strings.Join(parts, ",")
 }
 
+func convertWireGuard(p map[string]interface{}) string {
+	name := clash.MapGetStr(p, "name", "")
+	server := clash.MapGetStr(p, "server", "")
+	port := clash.MapGetInt(p, "port", 0)
+	privateKey := clash.MapGetStr(p, "private-key", "")
+	publicKey := clash.MapGetStr(p, "public-key", "")
+
+	parts := []string{fmt.Sprintf(`%s = WireGuard,interface-ip=%s,private-key="%s"`,
+		name, firstString(p["ip"]), privateKey)}
+	if ipv6 := firstString(p["ipv6"]); ipv6 != "" {
+		parts = append(parts, "interface-ipV6="+ipv6)
+	}
+	if mtu := clash.MapGetInt(p, "mtu", 0); mtu > 0 {
+		parts = append(parts, fmt.Sprintf("mtu=%d", mtu))
+	}
+	if dns := firstString(p["dns"]); dns != "" {
+		parts = append(parts, "dns="+dns)
+	}
+	if keepalive := clash.MapGetInt(p, "keepalive", 0); keepalive > 0 {
+		parts = append(parts, fmt.Sprintf("keeyalive=%d", keepalive))
+	}
+
+	peer := []string{fmt.Sprintf(`public-key="%s"`, publicKey)}
+	if psk := clash.MapGetStr(p, "pre-shared-key", ""); psk != "" {
+		peer = append(peer, fmt.Sprintf(`preshared-key="%s"`, psk))
+	}
+	if reserved := wireGuardReserved(p["reserved"]); reserved != "" {
+		peer = append(peer, "reserved="+reserved)
+	}
+	if allowedIPs := strings.Join(clash.ToStringSlice(p["allowed-ips"]), ","); allowedIPs != "" {
+		peer = append(peer, fmt.Sprintf(`allowed-ips="%s"`, allowedIPs))
+	} else {
+		peer = append(peer, `allowed-ips="0.0.0.0/0"`)
+	}
+	if server != "" && port > 0 {
+		peer = append(peer, fmt.Sprintf("endpoint=%s:%d", server, port))
+	}
+	parts = append(parts, "peers=[{"+strings.Join(peer, ",")+"}]")
+	parts = append(parts, "udp="+clash.BoolStr(clash.MapGetBool(p, "udp", true)))
+	return strings.Join(parts, ",")
+}
+
+func convertAnyTLS(p map[string]interface{}) string {
+	name := clash.MapGetStr(p, "name", "")
+	server := clash.MapGetStr(p, "server", "")
+	port := clash.MapGetInt(p, "port", 0)
+	password := clash.MapGetStr(p, "password", "")
+	parts := []string{fmt.Sprintf(`%s = AnyTLS,%s,%d,password="%s"`, name, server, port, password)}
+
+	if sni := firstNonEmpty(clash.MapGetStr(p, "servername", ""), clash.MapGetStr(p, "sni", "")); sni != "" {
+		parts = append(parts, "sni="+sni)
+	}
+	if clash.MapGetBool(p, "skip-cert-verify", false) {
+		parts = append(parts, "skip-cert-verify=true")
+	}
+	if fp := clash.MapGetStr(p, "client-fingerprint", ""); fp != "" {
+		parts = append(parts, "client-fingerprint="+fp)
+	}
+	if alpn := strings.Join(clash.ToStringSlice(p["alpn"]), ","); alpn != "" {
+		parts = append(parts, "alpn="+alpn)
+	}
+	return strings.Join(parts, ",")
+}
+
+func appendHTTPTransportOpts(parts *[]string, p map[string]interface{}) {
+	httpOpts, _ := clash.MapGet[map[string]interface{}](p, "http-opts")
+	if httpOpts == nil {
+		return
+	}
+	paths := clash.ToStringSlice(httpOpts["path"])
+	if len(paths) > 0 {
+		*parts = append(*parts, "path="+paths[0])
+	}
+	hosts := clash.ToStringSlice(httpOpts["host"])
+	if len(hosts) > 0 {
+		*parts = append(*parts, "host="+hosts[0])
+	}
+}
+
+func firstString(v interface{}) string {
+	switch x := v.(type) {
+	case string:
+		return strings.TrimSpace(x)
+	case []interface{}:
+		if len(x) > 0 {
+			return strings.TrimSpace(fmt.Sprintf("%v", x[0]))
+		}
+	case []string:
+		if len(x) > 0 {
+			return strings.TrimSpace(x[0])
+		}
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func wireGuardReserved(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	items := []string{}
+	switch x := v.(type) {
+	case []interface{}:
+		for _, item := range x {
+			items = append(items, strings.TrimSpace(fmt.Sprintf("%v", item)))
+		}
+	case []int:
+		for _, item := range x {
+			items = append(items, fmt.Sprintf("%d", item))
+		}
+	case string:
+		x = strings.TrimSpace(x)
+		if x == "" {
+			return ""
+		}
+		if strings.HasPrefix(x, "[") {
+			return x
+		}
+		return "[" + x + "]"
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	return "[" + strings.Join(items, ",") + "]"
+}
+
 type proxyConverter func(map[string]interface{}) string
 
 var proxyConverters = map[string]proxyConverter{
@@ -490,6 +648,8 @@ var proxyConverters = map[string]proxyConverter{
 	"hysteria2": convertHysteria2,
 	"socks5":    convertSocks5,
 	"http":      convertHTTP,
+	"wireguard": convertWireGuard,
+	"anytls":    convertAnyTLS,
 }
 
 func convertProxies(proxies []map[string]interface{}) string {
@@ -733,8 +893,7 @@ var unsupportedRuleTypes = map[string]bool{
 	"IN-TYPE": true, "IN-USER": true, "IN-NAME": true,
 	"PROCESS-PATH": true, "PROCESS-PATH-REGEX": true, "PROCESS-PATH-WILDCARD": true,
 	"PROCESS-NAME": true, "PROCESS-NAME-REGEX": true, "PROCESS-NAME-WILDCARD": true,
-	"UID": true, "DSCP": true, "NETWORK": true, "SUB-RULE": true,
-	"AND": true, "OR": true, "NOT": true,
+	"UID": true, "DSCP": true, "SUB-RULE": true,
 }
 
 func convertRulesAndRemoteRules(rules []interface{}, ruleProviders map[string]interface{}, ruleProviderOrder []string) (string, string) {
@@ -799,6 +958,9 @@ func convertRulesAndRemoteRules(rules []interface{}, ruleProviders map[string]in
 
 		case "DST-PORT":
 			localLines = append(localLines, "DEST-PORT,"+strings.Join(parts[1:], ","))
+
+		case "NETWORK":
+			localLines = append(localLines, "PROTOCOL,"+strings.Join(parts[1:], ","))
 
 		default:
 			if unsupportedRuleTypes[ruleType] {

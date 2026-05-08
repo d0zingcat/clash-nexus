@@ -97,6 +97,8 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 | vmess | vmess |
 | vless | VLESS |
 | hysteria2 | Hysteria2 |
+| wireguard | WireGuard |
+| anytls | AnyTLS |
 
 ### 配置段落映射
 
@@ -109,7 +111,7 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 | `dialer-proxy` | `[Proxy Chain]` | 代理链 |
 | `rules` | `[Rule]` | 本地规则 |
 | `rule-providers` | `[Remote Rule]` | 远程规则订阅 |
-| `dns` | `[General]` dns-server/doh-server | DNS 配置 |
+| `dns` | `[General]` dns-server/doh-server/doq-server/doh3-server | DNS 配置 |
 | `hosts` | `[Host]` | 域名映射 |
 
 ### 自动处理
