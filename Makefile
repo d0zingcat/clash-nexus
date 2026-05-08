@@ -2,13 +2,14 @@ APP := clash-nexus
 ADDR ?= 127.0.0.1:8080
 DOCKER_IMAGE ?= clash-nexus
 
-.PHONY: help install web build test serve docker-build docker-run clean
+.PHONY: help install web build build-linux test serve docker-build docker-run clean
 
 help:
 	@echo "Targets:"
 	@echo "  make install       Install frontend dependencies"
 	@echo "  make web           Build embedded React frontend"
 	@echo "  make build         Build frontend and Go binary"
+	@echo "  make build-linux   Build Linux Go binary to /out/$(APP)"
 	@echo "  make test          Run Go tests"
 	@echo "  make serve         Build and run local web server (ADDR=$(ADDR))"
 	@echo "  make docker-build  Build Docker image (DOCKER_IMAGE=$(DOCKER_IMAGE))"
@@ -23,6 +24,9 @@ web:
 
 build: web
 	go build -o $(APP) .
+
+build-linux:
+	CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/$(APP) .
 
 test:
 	go test ./...

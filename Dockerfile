@@ -6,19 +6,21 @@ ARG GO_VERSION=1.26.2-alpine
 FROM node:${NODE_VERSION} AS web-builder
 WORKDIR /src
 
+RUN apk add --no-cache make
 RUN npm install -g pnpm@11.0.8
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY Makefile package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 COPY components.json postcss.config.js tailwind.config.ts tsconfig.json vite.config.ts ./
 COPY web ./web
-RUN pnpm run web:build
+RUN make web
 
 FROM golang:${GO_VERSION} AS go-builder
 WORKDIR /src
 
+RUN apk add --no-cache make
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
@@ -27,7 +29,7 @@ COPY . .
 COPY --from=web-builder /src/internal/web/static ./internal/web/static
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/clash-nexus .
+    make build-linux
 
 FROM alpine:3.22 AS runtime
 RUN addgroup -S clash && adduser -S clash -G clash && apk add --no-cache ca-certificates
