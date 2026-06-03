@@ -64,7 +64,7 @@ func convertRuleProviderURL(url string) string {
 }
 
 var unsupportedRuleTypes = map[string]bool{
-	"GEOSITE": true, "DOMAIN-REGEX": true, "DOMAIN-WILDCARD": true,
+	"GEOSITE": true, "DOMAIN-REGEX": true,
 	"IP-SUFFIX": true, "SRC-IP-SUFFIX": true, "SRC-GEOIP": true,
 	"SRC-IP-ASN": true, "SRC-IP-CIDR": true, "IN-PORT": true,
 	"IN-TYPE": true, "IN-USER": true, "IN-NAME": true,
@@ -590,11 +590,7 @@ func convertServerLocal(proxies []map[string]interface{}) (string, []string) {
 			lines = append(lines, "; [WARNING] "+w)
 			continue
 		}
-		line := conv(p)
-		if dialer := clash.MapGetStr(p, "dialer-proxy", ""); dialer != "" {
-			line += fmt.Sprintf(" ; dialer-proxy=%s → routed via [filter_local]", dialer)
-		}
-		lines = append(lines, line)
+		lines = append(lines, conv(p))
 	}
 	return strings.Join(lines, "\n"), warnings
 }
@@ -804,6 +800,20 @@ func convertFilters(
 			}
 			policy := lowerPolicy(parts[2])
 			localLines = append(localLines, fmt.Sprintf("host-keyword, %s, %s%s", parts[1], policy, via(policy)))
+
+		case "DOMAIN-WILDCARD":
+			if len(parts) < 3 {
+				continue
+			}
+			policy := lowerPolicy(parts[2])
+			localLines = append(localLines, fmt.Sprintf("host-wildcard, %s, %s%s", parts[1], policy, via(policy)))
+
+		case "IP-ASN":
+			if len(parts) < 3 {
+				continue
+			}
+			policy := lowerPolicy(parts[2])
+			localLines = append(localLines, fmt.Sprintf("ip-asn, %s, %s%s", parts[1], policy, via(policy)))
 
 		case "IP-CIDR":
 			if len(parts) < 3 {
