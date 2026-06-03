@@ -1840,6 +1840,24 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -target qx input/clash.yaml\n", cmd)
 		fmt.Fprintf(os.Stderr, "  %s -target qx -o output/custom.conf input/clash.yaml\n\n", cmd)
 	}
+	// Go's flag package stops at the first non-flag argument, so reorder args to
+	// move all flag pairs before positional args, enabling flags to appear anywhere.
+	{
+		knownFlags := map[string]bool{"-o": true, "--o": true, "-target": true, "--target": true, "-input": true, "--input": true}
+		var flagArgs, posArgs []string
+		args := os.Args[1:]
+		for i := 0; i < len(args); i++ {
+			if knownFlags[args[i]] && i+1 < len(args) {
+				flagArgs = append(flagArgs, args[i], args[i+1])
+				i++
+			} else if strings.HasPrefix(args[i], "-") {
+				flagArgs = append(flagArgs, args[i])
+			} else {
+				posArgs = append(posArgs, args[i])
+			}
+		}
+		os.Args = append([]string{os.Args[0]}, append(flagArgs, posArgs...)...)
+	}
 	flag.Parse()
 
 	inputPath := *inputFlag
