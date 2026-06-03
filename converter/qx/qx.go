@@ -50,10 +50,12 @@ func lowerPolicy(p string) string {
 
 var reYamlSuffix = regexp.MustCompile(`\.yaml$`)
 
-// convertRuleProviderURL converts blackmatrix7 Clash-format rule URLs to QX/Loon format.
+// convertRuleProviderURL converts blackmatrix7 rule URLs to the QuantumultX path.
+// Handles both rule/Clash/ and rule/Loon/ input paths.
 func convertRuleProviderURL(url string) string {
-	if strings.Contains(url, "blackmatrix7") && strings.Contains(url, "rule/Clash/") {
-		url = strings.ReplaceAll(url, "rule/Clash/", "rule/Loon/")
+	if strings.Contains(url, "blackmatrix7") {
+		url = strings.ReplaceAll(url, "rule/Clash/", "rule/QuantumultX/")
+		url = strings.ReplaceAll(url, "rule/Loon/", "rule/QuantumultX/")
 		url = reYamlSuffix.ReplaceAllString(url, ".list")
 	} else if strings.Contains(url, "ACL4SSR") {
 		url = reYamlSuffix.ReplaceAllString(url, ".list")
