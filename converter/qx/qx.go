@@ -117,7 +117,7 @@ func buildChainInfo(proxies []map[string]interface{}, groups []map[string]interf
 func convertGeneral(_ map[string]interface{}) string {
 	return strings.Join([]string{
 		"[general]",
-		"resource_parser_url = https://raw.githubusercontent.com/sub-store-org/Sub-Store/master/backend/dist/sub-store-parser.loon.min.js",
+		"resource_parser_url = https://raw.githubusercontent.com/sub-store-org/Sub-Store/master/backend/dist/sub-store-parser.min.js",
 		"server_check_url = http://www.gstatic.com/generate_204",
 		"network_check_url = http://wifi.vivo.com.cn/generate_204",
 		"server_check_timeout = 5000",
@@ -357,7 +357,6 @@ func convertVmess(p map[string]interface{}) string {
 	if sni == "" {
 		sni = clash.MapGetStr(p, "sni", "")
 	}
-	skipVerify := clash.MapGetBool(p, "skip-cert-verify", false)
 	alterId := clash.MapGetInt(p, "alterId", 0)
 	udp := clash.MapGetBool(p, "udp", true)
 	fastOpen := clash.MapGetBool(p, "fast-open", false)
@@ -387,9 +386,6 @@ func convertVmess(p map[string]interface{}) string {
 		if wsPath != "" {
 			parts = append(parts, "obfs-uri="+wsPath)
 		}
-		if tls {
-			parts = append(parts, "tls-verification="+clash.BoolStr(!skipVerify))
-		}
 	case "http":
 		httpOpts, _ := clash.MapGet[map[string]interface{}](p, "http-opts")
 		parts = append(parts, "obfs=http")
@@ -409,7 +405,6 @@ func convertVmess(p map[string]interface{}) string {
 			if sni != "" {
 				parts = append(parts, "obfs-host="+sni)
 			}
-			parts = append(parts, "tls-verification="+clash.BoolStr(!skipVerify))
 		}
 	}
 
@@ -433,7 +428,6 @@ func convertVless(p map[string]interface{}) string {
 	if sni == "" {
 		sni = clash.MapGetStr(p, "sni", "")
 	}
-	skipVerify := clash.MapGetBool(p, "skip-cert-verify", false)
 	flow := clash.MapGetStr(p, "flow", "")
 	udp := clash.MapGetBool(p, "udp", true)
 	fastOpen := clash.MapGetBool(p, "fast-open", false)
@@ -479,16 +473,12 @@ func convertVless(p map[string]interface{}) string {
 			if wsPath != "" {
 				parts = append(parts, "obfs-uri="+wsPath)
 			}
-			if tls {
-				parts = append(parts, "tls-verification="+clash.BoolStr(!skipVerify))
-			}
 		default: // tcp
 			if tls {
 				parts = append(parts, "obfs=over-tls")
 				if sni != "" {
 					parts = append(parts, "obfs-host="+sni)
 				}
-				parts = append(parts, "tls-verification="+clash.BoolStr(!skipVerify))
 			}
 		}
 	}
@@ -545,6 +535,9 @@ func convertHTTP(p map[string]interface{}) string {
 	sni := clash.MapGetStr(p, "sni", "")
 	skipVerify := clash.MapGetBool(p, "skip-cert-verify", false)
 
+	fastOpen := clash.MapGetBool(p, "fast-open", false)
+	udp := clash.MapGetBool(p, "udp", false)
+
 	parts := []string{fmt.Sprintf("http=%s:%d", server, port)}
 	if username != "" {
 		parts = append(parts, "username="+username)
@@ -559,6 +552,8 @@ func convertHTTP(p map[string]interface{}) string {
 		}
 		parts = append(parts, "tls-verification="+clash.BoolStr(!skipVerify))
 	}
+	parts = append(parts, "fast-open="+clash.BoolStr(fastOpen))
+	parts = append(parts, "udp-relay="+clash.BoolStr(udp))
 	parts = append(parts, "tag="+name)
 	return strings.Join(parts, ", ")
 }
