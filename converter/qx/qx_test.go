@@ -77,6 +77,26 @@ func TestConvertFilters_ViaInterfaceOnChainCapable(t *testing.T) {
 	}
 }
 
+func TestConvertDNS_MultipleDoHOnOneLine(t *testing.T) {
+	cfg := map[string]interface{}{
+		"dns": map[string]interface{}{
+			"enable": true,
+			"nameserver": []interface{}{
+				"https://dns.google/dns-query",
+				"https://1.1.1.1/dns-query",
+				"8.8.8.8",
+			},
+		},
+	}
+	got := convertDNS(cfg)
+	if strings.Count(got, "doh-server") > 1 {
+		t.Errorf("expected a single doh-server line, got:\n%s", got)
+	}
+	if !strings.Contains(got, "doh-server = https://dns.google/dns-query,https://1.1.1.1/dns-query") {
+		t.Errorf("expected both DoH servers joined on one line, got:\n%s", got)
+	}
+}
+
 func TestConvertFilters_NoViaInterfaceWithoutChain(t *testing.T) {
 	proxies := buildProxies(
 		map[string]interface{}{"name": "us-ss", "type": "ss", "server": "us.example.com"},
