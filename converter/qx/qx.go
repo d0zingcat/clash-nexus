@@ -76,14 +76,14 @@ var unsupportedRuleTypes = map[string]bool{
 
 // buildChainInfo extracts proxy-chain metadata from proxies and groups.
 //
-//	chainProxies:    proxyName → dialerGroupName
-//	pureChainGroups: groupName → true when every direct proxy member has dialer-proxy
+//	chainProxies:       proxyName → dialerGroupName
+//	chainCapableGroups: groupName → true when ANY member (direct or transitively) has dialer-proxy
 func buildChainInfo(proxies []map[string]interface{}, groups []map[string]interface{}) (
 	chainProxies map[string]string,
-	pureChainGroups map[string]bool,
+	chainCapableGroups map[string]bool,
 ) {
 	chainProxies = map[string]string{}
-	pureChainGroups = map[string]bool{}
+	chainCapableGroups = map[string]bool{}
 
 	for _, p := range proxies {
 		if dialer := clash.MapGetStr(p, "dialer-proxy", ""); dialer != "" {
@@ -91,22 +91,35 @@ func buildChainInfo(proxies []map[string]interface{}, groups []map[string]interf
 		}
 	}
 
+	// First pass: groups that directly contain at least one chain proxy.
 	for _, g := range groups {
-		pxList := clash.ToStringSlice(g["proxies"])
-		if len(pxList) == 0 || len(clash.ToStringSlice(g["use"])) > 0 {
-			continue
-		}
-		all := true
-		for _, px := range pxList {
-			if _, ok := chainProxies[px]; !ok {
-				all = false
+		name := clash.MapGetStr(g, "name", "")
+		for _, px := range clash.ToStringSlice(g["proxies"]) {
+			if _, ok := chainProxies[px]; ok {
+				chainCapableGroups[name] = true
 				break
 			}
 		}
-		if all {
-			pureChainGroups[clash.MapGetStr(g, "name", "")] = true
+	}
+
+	// Iterative expansion: groups that contain a chain-capable group are also chain-capable.
+	for changed := true; changed; {
+		changed = false
+		for _, g := range groups {
+			name := clash.MapGetStr(g, "name", "")
+			if chainCapableGroups[name] {
+				continue
+			}
+			for _, px := range clash.ToStringSlice(g["proxies"]) {
+				if chainCapableGroups[px] {
+					chainCapableGroups[name] = true
+					changed = true
+					break
+				}
+			}
 		}
 	}
+
 	return
 }
 
@@ -684,7 +697,7 @@ func convertFilters(
 	rules []interface{},
 	ruleProviders map[string]interface{},
 	proxies []map[string]interface{},
-	pureChainGroups map[string]bool,
+	chainCapableGroups map[string]bool,
 ) (filterLocal string, filterRemote string, warnings []string) {
 
 	providerURLs := map[string]string{}
@@ -723,9 +736,11 @@ func convertFilters(
 	remoteLines := []string{"[filter_remote]"}
 	seenRemote := map[string]bool{}
 
-	// via-interface suffix: only for rules whose policy is a pure chain group.
+	// via-interface=%TUN% forces traffic through TUN so QX re-evaluates routing,
+	// which lets the chain server routes at the top of [filter_local] redirect
+	// the proxy's outbound connection through the transit (dialer-proxy) proxy.
 	via := func(policy string) string {
-		if pureChainGroups[policy] {
+		if chainCapableGroups[policy] {
 			return ", via-interface=%TUN%"
 		}
 		return ""
@@ -858,7 +873,7 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 
 	proxies := clash.ToMapSlice(config["proxies"])
 	groups := clash.ToMapSlice(config["proxy-groups"])
-	_, pureChainGroups := buildChainInfo(proxies, groups)
+	_, chainCapableGroups := buildChainInfo(proxies, groups)
 
 	sections = append(sections, convertPolicy(groups))
 
@@ -878,7 +893,7 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 		ruleProvidersMap = map[string]interface{}{}
 	}
 
-	filterLocalText, filterRemoteText, filterWarnings := convertFilters(rules, ruleProvidersMap, proxies, pureChainGroups)
+	filterLocalText, filterRemoteText, filterWarnings := convertFilters(rules, ruleProvidersMap, proxies, chainCapableGroups)
 	allWarnings = append(allWarnings, filterWarnings...)
 
 	sections = append(sections, filterRemoteText)
