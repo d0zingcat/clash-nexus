@@ -172,21 +172,29 @@ func convertDNS(config map[string]interface{}) string {
 	}
 
 	seenDoh := map[string]bool{}
+	dohServers := []string{}
 	for _, ns := range append(getList("nameserver"), getList("fallback")...) {
 		ns = strings.Trim(ns, `'"`)
 		if strings.HasPrefix(ns, "https://") && !seenDoh[ns] {
-			lines = append(lines, "doh-server = "+ns)
+			dohServers = append(dohServers, ns)
 			seenDoh[ns] = true
 		}
 	}
+	if len(dohServers) > 0 {
+		lines = append(lines, "doh-server = "+strings.Join(dohServers, ","))
+	}
 
 	seenDoq := map[string]bool{}
+	doqServers := []string{}
 	for _, ns := range append(getList("nameserver"), getList("fallback")...) {
 		ns = strings.Trim(ns, `'"`)
 		if strings.HasPrefix(ns, "quic://") && !seenDoq[ns] {
-			lines = append(lines, "doq-server = "+ns)
+			doqServers = append(doqServers, ns)
 			seenDoq[ns] = true
 		}
+	}
+	if len(doqServers) > 0 {
+		lines = append(lines, "doq-server = "+strings.Join(doqServers, ","))
 	}
 
 	// nameserver-policy → per-domain server/doh-server/doq-server entries
