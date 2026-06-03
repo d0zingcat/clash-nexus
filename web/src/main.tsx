@@ -133,7 +133,7 @@ function App() {
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Local converter</p>
           <h1 className="text-3xl font-semibold tracking-normal md:text-4xl">Clash Nexus</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Clash YAML 转换为 Loon 或 Egern。支持粘贴、上传和远程 URL，并为远程配置生成可订阅的转换地址。
+            Clash YAML 转换为 Loon、Egern 或 Quantumult X。支持粘贴、上传和远程 URL，并为远程配置生成可订阅的转换地址。
           </p>
         </div>
         <div className="rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground">127.0.0.1 only</div>
@@ -149,7 +149,7 @@ function App() {
               </div>
               <div className="grid gap-2">
                 <Label>目标格式</Label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {targets.map((item) => (
                     <Button
                       key={item.name}

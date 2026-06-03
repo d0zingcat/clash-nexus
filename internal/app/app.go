@@ -12,6 +12,7 @@ import (
 	"clash-nexus/converter"
 	"clash-nexus/converter/egern"
 	"clash-nexus/converter/loon"
+	"clash-nexus/converter/qx"
 )
 
 var (
@@ -45,6 +46,7 @@ func NewService() *Service {
 	return &Service{registry: map[string]converter.Converter{
 		"loon":  loon.New(),
 		"egern": egern.New(),
+		"qx":    qx.New(),
 	}}
 }
 
