@@ -130,7 +130,7 @@ func buildChainInfo(proxies []map[string]interface{}, groups []map[string]interf
 func convertGeneral(_ map[string]interface{}) string {
 	return strings.Join([]string{
 		"[general]",
-		"resource_parser_url = https://raw.githubusercontent.com/sub-store-org/Sub-Store/master/backend/dist/sub-store-parser.min.js",
+		"resource_parser_url = https://cdn.jsdelivr.net/gh/KOP-XIAO/QuantumultX@master/Scripts/resource-parser.js",
 		"server_check_url = http://www.gstatic.com/generate_204",
 		"network_check_url = http://wifi.vivo.com.cn/generate_204",
 		"server_check_timeout = 5000",
