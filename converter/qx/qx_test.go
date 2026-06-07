@@ -20,7 +20,7 @@ func buildGroups(entries ...map[string]interface{}) []map[string]interface{} {
 func TestBuildChainInfo_TransitiveDetection(t *testing.T) {
 	// Proxy "jp-ss" uses dialer-proxy "Transit".
 	// Group "ProxyChain" contains "jp-ss" (chain) and "us-ss" (not chain) — mixed.
-	// Group "Choose" contains "ProxyChain", but it is not itself a proxy chain.
+	// Group "Choose" contains "ProxyChain", so it transitively affects chain routing.
 	proxies := buildProxies(
 		map[string]interface{}{"name": "jp-ss", "type": "ss", "server": "jp.example.com", "dialer-proxy": "Transit"},
 		map[string]interface{}{"name": "us-ss", "type": "ss", "server": "us.example.com"},
@@ -32,22 +32,29 @@ func TestBuildChainInfo_TransitiveDetection(t *testing.T) {
 		map[string]interface{}{"name": "Unrelated", "type": "select", "proxies": []interface{}{"us-ss", "direct"}},
 	)
 
-	chainProxies, chainCapable := buildChainInfo(proxies, groups)
+	chainProxies, proxyChainGroups := buildChainInfo(proxies, groups)
+	chainAffecting := buildChainAffectingPolicies(groups, proxyChainGroups)
 
 	if _, ok := chainProxies["jp-ss"]; !ok {
 		t.Error("jp-ss should be in chainProxies")
 	}
-	if !chainCapable["ProxyChain"] {
-		t.Error("ProxyChain should be chain-capable (contains jp-ss which has dialer-proxy)")
+	if !proxyChainGroups["ProxyChain"] {
+		t.Error("ProxyChain should be a proxy-chain group (contains jp-ss which has dialer-proxy)")
 	}
-	if chainCapable["Choose"] {
-		t.Error("Choose should NOT be chain-capable (it only contains a proxy-chain group)")
+	if proxyChainGroups["Choose"] {
+		t.Error("Choose should NOT be a direct proxy-chain group")
 	}
-	if chainCapable["Unrelated"] {
-		t.Error("Unrelated should NOT be chain-capable")
+	if !chainAffecting["ProxyChain"] {
+		t.Error("ProxyChain should affect chain routing")
 	}
-	if chainCapable["Transit"] {
-		t.Error("Transit should NOT be chain-capable (it is the transit target, not a chain consumer)")
+	if !chainAffecting["Choose"] {
+		t.Error("Choose should transitively affect chain routing via ProxyChain")
+	}
+	if chainAffecting["Unrelated"] {
+		t.Error("Unrelated should NOT affect chain routing")
+	}
+	if chainAffecting["Transit"] {
+		t.Error("Transit should NOT affect chain routing (it is the transit target, not a chain consumer)")
 	}
 }
 
@@ -70,7 +77,8 @@ func TestConvertFilters_ViaInterfaceOnlyOnProxyChainGroup(t *testing.T) {
 		map[string]interface{}{"name": "ProxyChain", "type": "select", "proxies": []interface{}{"jp-ss", "us-ss"}},
 		map[string]interface{}{"name": "Choose", "type": "select", "proxies": []interface{}{"ProxyChain", "direct"}},
 	)
-	_, chainCapable := buildChainInfo(proxies, groups)
+	_, proxyChainGroups := buildChainInfo(proxies, groups)
+	chainAffecting := buildChainAffectingPolicies(groups, proxyChainGroups)
 
 	rules := []interface{}{
 		"DOMAIN-SUFFIX,chain.example.com,ProxyChain",
@@ -79,19 +87,19 @@ func TestConvertFilters_ViaInterfaceOnlyOnProxyChainGroup(t *testing.T) {
 		"MATCH,Choose",
 	}
 
-	localText, _, _ := convertFilters(rules, nil, proxies, chainCapable)
+	localText, _, _ := convertFilters(rules, nil, proxies, chainAffecting)
 
 	if !strings.Contains(localText, "host-suffix, chain.example.com, ProxyChain, via-interface=%TUN%") {
-		t.Errorf("expected via-interface=%%TUN%% only for ProxyChain rule, got:\n%s", localText)
+		t.Errorf("expected via-interface=%%TUN%% for ProxyChain rule, got:\n%s", localText)
 	}
-	if strings.Contains(localText, "host-suffix, regular.example.com, Choose, via-interface=%TUN%") {
-		t.Errorf("did not expect via-interface=%%TUN%% for non-chain Choose group, got:\n%s", localText)
+	if !strings.Contains(localText, "host-suffix, regular.example.com, Choose, via-interface=%TUN%") {
+		t.Errorf("expected via-interface=%%TUN%% for Choose rule that can select ProxyChain, got:\n%s", localText)
 	}
 	if strings.Contains(localText, "host-suffix, proxy.example.com, jp-ss, via-interface=%TUN%") {
 		t.Errorf("did not expect via-interface=%%TUN%% when rule policy is a proxy node, got:\n%s", localText)
 	}
-	if strings.Contains(localText, "final, Choose, via-interface=%TUN%") {
-		t.Errorf("did not expect via-interface=%%TUN%% for non-chain MATCH policy, got:\n%s", localText)
+	if !strings.Contains(localText, "final, Choose, via-interface=%TUN%") {
+		t.Errorf("expected via-interface=%%TUN%% for MATCH policy that can select ProxyChain, got:\n%s", localText)
 	}
 	// Verify chain server route is present
 	if !strings.Contains(localText, "ip-cidr, 203.0.113.10/32, Transit") {
@@ -179,14 +187,15 @@ func TestConvertFilters_NoViaInterfaceWithoutChain(t *testing.T) {
 	groups := buildGroups(
 		map[string]interface{}{"name": "Proxy", "type": "select", "proxies": []interface{}{"us-ss", "direct"}},
 	)
-	_, chainCapable := buildChainInfo(proxies, groups)
+	_, proxyChainGroups := buildChainInfo(proxies, groups)
+	chainAffecting := buildChainAffectingPolicies(groups, proxyChainGroups)
 
 	rules := []interface{}{
 		"DOMAIN-SUFFIX,example.com,Proxy",
 		"MATCH,Proxy",
 	}
 
-	localText, _, _ := convertFilters(rules, nil, proxies, chainCapable)
+	localText, _, _ := convertFilters(rules, nil, proxies, chainAffecting)
 
 	if strings.Contains(localText, "via-interface=%TUN%") {
 		t.Errorf("did not expect via-interface=%%TUN%% when no chain proxies, got:\n%s", localText)

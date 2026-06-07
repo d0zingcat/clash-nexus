@@ -123,6 +123,33 @@ func buildChainInfo(proxies []map[string]interface{}, groups []map[string]interf
 	return
 }
 
+// buildChainAffectingPolicies marks groups that can route traffic through a
+// dialer-proxy chain, including parents that transitively include a chain group.
+func buildChainAffectingPolicies(groups []map[string]interface{}, proxyChainGroups map[string]bool) map[string]bool {
+	affecting := map[string]bool{}
+	for name := range proxyChainGroups {
+		affecting[name] = true
+	}
+	changed := true
+	for changed {
+		changed = false
+		for _, g := range groups {
+			name := clash.MapGetStr(g, "name", "")
+			if affecting[name] {
+				continue
+			}
+			for _, px := range clash.ToStringSlice(g["proxies"]) {
+				if affecting[px] {
+					affecting[name] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	return affecting
+}
+
 func chainServerIPRoutes(proxies []map[string]interface{}) ([]string, []string) {
 	var routes []string
 	var warnings []string
@@ -764,7 +791,7 @@ func convertFilters(
 	rules []interface{},
 	ruleProviders map[string]interface{},
 	proxies []map[string]interface{},
-	proxyChainGroups map[string]bool,
+	chainAffectingPolicies map[string]bool,
 ) (filterLocal string, filterRemote string, warnings []string) {
 
 	providerURLs := map[string]string{}
@@ -792,7 +819,7 @@ func convertFilters(
 	// which lets the chain server routes at the top of [filter_local] redirect
 	// the proxy's outbound connection through the transit (dialer-proxy) proxy.
 	via := func(policy string) string {
-		if proxyChainGroups[policy] {
+		if chainAffectingPolicies[policy] {
 			return ", via-interface=%TUN%"
 		}
 		return ""
@@ -926,6 +953,7 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 	proxies := clash.ToMapSlice(config["proxies"])
 	groups := clash.ToMapSlice(config["proxy-groups"])
 	_, proxyChainGroups := buildChainInfo(proxies, groups)
+	chainAffectingPolicies := buildChainAffectingPolicies(groups, proxyChainGroups)
 
 	sections = append(sections, convertPolicy(groups))
 
@@ -945,7 +973,7 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 		ruleProvidersMap = map[string]interface{}{}
 	}
 
-	filterLocalText, filterRemoteText, filterWarnings := convertFilters(rules, ruleProvidersMap, proxies, proxyChainGroups)
+	filterLocalText, filterRemoteText, filterWarnings := convertFilters(rules, ruleProvidersMap, proxies, chainAffectingPolicies)
 	allWarnings = append(allWarnings, filterWarnings...)
 
 	sections = append(sections, filterRemoteText)
