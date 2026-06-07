@@ -2,9 +2,12 @@
 package qx
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -34,6 +37,22 @@ func (c *Converter) Convert(config map[string]interface{}, root *yaml.Node) ([]b
 // ---------------------------------------------------------------------------
 
 type proxyConverter func(map[string]interface{}) string
+
+var resolveHostIPs = func(host string) ([]net.IP, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	ips := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		if addr.IP != nil {
+			ips = append(ips, addr.IP)
+		}
+	}
+	return ips, nil
+}
 
 // lowerPolicy maps Clash built-in policy names to QX lowercase equivalents.
 func lowerPolicy(p string) string {
@@ -76,14 +95,14 @@ var unsupportedRuleTypes = map[string]bool{
 
 // buildChainInfo extracts proxy-chain metadata from proxies and groups.
 //
-//	chainProxies:       proxyName → dialerGroupName
-//	chainCapableGroups: groupName → true when ANY member (direct or transitively) has dialer-proxy
+//	chainProxies:     proxyName → dialerGroupName
+//	proxyChainGroups: groupName → true when a direct member proxy has dialer-proxy
 func buildChainInfo(proxies []map[string]interface{}, groups []map[string]interface{}) (
 	chainProxies map[string]string,
-	chainCapableGroups map[string]bool,
+	proxyChainGroups map[string]bool,
 ) {
 	chainProxies = map[string]string{}
-	chainCapableGroups = map[string]bool{}
+	proxyChainGroups = map[string]bool{}
 
 	for _, p := range proxies {
 		if dialer := clash.MapGetStr(p, "dialer-proxy", ""); dialer != "" {
@@ -91,36 +110,76 @@ func buildChainInfo(proxies []map[string]interface{}, groups []map[string]interf
 		}
 	}
 
-	// First pass: groups that directly contain at least one chain proxy.
 	for _, g := range groups {
 		name := clash.MapGetStr(g, "name", "")
 		for _, px := range clash.ToStringSlice(g["proxies"]) {
 			if _, ok := chainProxies[px]; ok {
-				chainCapableGroups[name] = true
+				proxyChainGroups[name] = true
 				break
 			}
 		}
 	}
 
-	// Iterative expansion: groups that contain a chain-capable group are also chain-capable.
-	for changed := true; changed; {
-		changed = false
-		for _, g := range groups {
-			name := clash.MapGetStr(g, "name", "")
-			if chainCapableGroups[name] {
+	return
+}
+
+func chainServerIPRoutes(proxies []map[string]interface{}) ([]string, []string) {
+	var routes []string
+	var warnings []string
+	seenRoute := map[string]bool{}
+
+	for _, p := range proxies {
+		dialer := clash.MapGetStr(p, "dialer-proxy", "")
+		if dialer == "" {
+			continue
+		}
+		server := strings.TrimSpace(clash.MapGetStr(p, "server", ""))
+		if server == "" {
+			continue
+		}
+
+		ips, err := serverIPs(server)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("cannot resolve dialer-proxy server %q: %s", server, err))
+			continue
+		}
+		if len(ips) == 0 {
+			warnings = append(warnings, fmt.Sprintf("cannot resolve dialer-proxy server %q: no IP addresses", server))
+			continue
+		}
+
+		for _, ip := range ips {
+			ruleType, cidr := ipCIDRRule(ip)
+			if cidr == "" {
 				continue
 			}
-			for _, px := range clash.ToStringSlice(g["proxies"]) {
-				if chainCapableGroups[px] {
-					chainCapableGroups[name] = true
-					changed = true
-					break
-				}
+			key := cidr + "\x00" + dialer
+			if seenRoute[key] {
+				continue
 			}
+			seenRoute[key] = true
+			routes = append(routes, fmt.Sprintf("%s, %s, %s", ruleType, cidr, lowerPolicy(dialer)))
 		}
 	}
 
-	return
+	return routes, warnings
+}
+
+func serverIPs(server string) ([]net.IP, error) {
+	if ip := net.ParseIP(strings.Trim(server, "[]")); ip != nil {
+		return []net.IP{ip}, nil
+	}
+	return resolveHostIPs(server)
+}
+
+func ipCIDRRule(ip net.IP) (string, string) {
+	if v4 := ip.To4(); v4 != nil {
+		return "ip-cidr", v4.String() + "/32"
+	}
+	if v6 := ip.To16(); v6 != nil {
+		return "ip6-cidr", v6.String() + "/128"
+	}
+	return "", ""
 }
 
 // ---------------------------------------------------------------------------
@@ -705,7 +764,7 @@ func convertFilters(
 	rules []interface{},
 	ruleProviders map[string]interface{},
 	proxies []map[string]interface{},
-	chainCapableGroups map[string]bool,
+	proxyChainGroups map[string]bool,
 ) (filterLocal string, filterRemote string, warnings []string) {
 
 	providerURLs := map[string]string{}
@@ -715,25 +774,10 @@ func convertFilters(
 		}
 	}
 
-	// Build chain server routing rules (preserve proxy order, deduplicate by server+dialer).
-	var chainRoutes []string
-	seenRoute := map[string]bool{}
-	for _, p := range proxies {
-		dialer := clash.MapGetStr(p, "dialer-proxy", "")
-		if dialer == "" {
-			continue
-		}
-		server := clash.MapGetStr(p, "server", "")
-		if server == "" {
-			continue
-		}
-		key := server + "\x00" + dialer
-		if seenRoute[key] {
-			continue
-		}
-		seenRoute[key] = true
-		chainRoutes = append(chainRoutes, fmt.Sprintf("host-suffix, %s, %s", server, lowerPolicy(dialer)))
-	}
+	// Build chain server routing rules from resolved server IPs. QX needs the
+	// proxy's outbound connection to hit the dialer policy by destination IP.
+	chainRoutes, chainWarnings := chainServerIPRoutes(proxies)
+	warnings = append(warnings, chainWarnings...)
 
 	localLines := []string{"[filter_local]"}
 	if len(chainRoutes) > 0 {
@@ -748,7 +792,7 @@ func convertFilters(
 	// which lets the chain server routes at the top of [filter_local] redirect
 	// the proxy's outbound connection through the transit (dialer-proxy) proxy.
 	via := func(policy string) string {
-		if chainCapableGroups[policy] {
+		if proxyChainGroups[policy] {
 			return ", via-interface=%TUN%"
 		}
 		return ""
@@ -881,7 +925,7 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 
 	proxies := clash.ToMapSlice(config["proxies"])
 	groups := clash.ToMapSlice(config["proxy-groups"])
-	_, chainCapableGroups := buildChainInfo(proxies, groups)
+	_, proxyChainGroups := buildChainInfo(proxies, groups)
 
 	sections = append(sections, convertPolicy(groups))
 
@@ -901,7 +945,7 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 		ruleProvidersMap = map[string]interface{}{}
 	}
 
-	filterLocalText, filterRemoteText, filterWarnings := convertFilters(rules, ruleProvidersMap, proxies, chainCapableGroups)
+	filterLocalText, filterRemoteText, filterWarnings := convertFilters(rules, ruleProvidersMap, proxies, proxyChainGroups)
 	allWarnings = append(allWarnings, filterWarnings...)
 
 	sections = append(sections, filterRemoteText)
