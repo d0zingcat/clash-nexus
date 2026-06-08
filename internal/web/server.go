@@ -10,10 +10,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"clash-nexus/converter"
 	"clash-nexus/internal/app"
 )
 
@@ -79,9 +81,10 @@ func (s *Server) targets(w http.ResponseWriter, r *http.Request) {
 }
 
 type convertRequest struct {
-	Target string `json:"target"`
-	YAML   string `json:"yaml"`
-	URL    string `json:"url"`
+	Target            string `json:"target"`
+	YAML              string `json:"yaml"`
+	URL               string `json:"url"`
+	QXFinalProxyChain bool   `json:"qxFinalProxyChain"`
 }
 
 func (s *Server) convertJSON(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +102,7 @@ func (s *Server) convertJSON(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, err)
 		return
 	}
-	s.writeConversion(w, req.Target, data)
+	s.writeConversion(w, req.Target, data, optionsFromRequest(req))
 }
 
 func (s *Server) convertFile(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +114,7 @@ func (s *Server) convertFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target := strings.TrimSpace(r.FormValue("target"))
+	options := optionsFromValues(r.Form)
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "file is required")
@@ -127,7 +131,7 @@ func (s *Server) convertFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "too_large", "input must be 5 MiB or smaller")
 		return
 	}
-	s.writeConversion(w, target, data)
+	s.writeConversion(w, target, data, options)
 }
 
 func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
@@ -141,8 +145,9 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "url is required")
 		return
 	}
+	options := optionsFromValues(r.URL.Query())
 
-	cacheKey := target + "\x00" + rawURL
+	cacheKey := target + "\x00" + rawURL + "\x00" + optionsCacheKey(options)
 	if result, ok := s.getCachedSubscription(cacheKey); ok {
 		w.Header().Set("X-Clash-Nexus-Cache", "HIT")
 		writeSubscription(w, result)
@@ -154,7 +159,7 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, err)
 		return
 	}
-	result, err := s.service.ConvertBytes(target, data)
+	result, err := s.service.ConvertBytesWithOptions(target, data, options)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -256,8 +261,8 @@ func (s *Server) fetchRemote(raw string) ([]byte, error) {
 	return data, nil
 }
 
-func (s *Server) writeConversion(w http.ResponseWriter, target string, data []byte) {
-	result, err := s.service.ConvertBytes(strings.TrimSpace(target), data)
+func (s *Server) writeConversion(w http.ResponseWriter, target string, data []byte, options converter.Options) {
+	result, err := s.service.ConvertBytesWithOptions(strings.TrimSpace(target), data, options)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -269,6 +274,26 @@ func (s *Server) writeConversion(w http.ResponseWriter, target string, data []by
 		"content":   string(result.Content),
 		"warnings":  result.Warnings,
 	})
+}
+
+func optionsFromRequest(req convertRequest) converter.Options {
+	return converter.Options{QXFinalProxyChain: req.QXFinalProxyChain}
+}
+
+func optionsFromValues(values url.Values) converter.Options {
+	return converter.Options{QXFinalProxyChain: parseBool(values.Get("qx_final_proxy_chain"))}
+}
+
+func optionsCacheKey(options converter.Options) string {
+	if options.QXFinalProxyChain {
+		return "qx_final_proxy_chain=1"
+	}
+	return "qx_final_proxy_chain=0"
+}
+
+func parseBool(raw string) bool {
+	value, err := strconv.ParseBool(strings.TrimSpace(raw))
+	return err == nil && value
 }
 
 type httpError struct {

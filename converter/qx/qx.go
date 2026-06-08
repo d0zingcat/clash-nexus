@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"clash-nexus/converter"
 	"clash-nexus/converter/clash"
 )
 
@@ -28,7 +29,12 @@ func (c *Converter) DefaultExtension() string { return ".conf" }
 
 // Convert transforms a Clash config map into a Quantumult X .conf byte slice.
 func (c *Converter) Convert(config map[string]interface{}, root *yaml.Node) ([]byte, []string, error) {
-	result, warnings := convert(config, root)
+	return c.ConvertWithOptions(config, root, converter.Options{})
+}
+
+// ConvertWithOptions transforms a Clash config map using target-specific options.
+func (c *Converter) ConvertWithOptions(config map[string]interface{}, root *yaml.Node, options converter.Options) ([]byte, []string, error) {
+	result, warnings := convert(config, root, options)
 	return []byte(result), warnings, nil
 }
 
@@ -792,6 +798,7 @@ func convertFilters(
 	ruleProviders map[string]interface{},
 	proxies []map[string]interface{},
 	chainAffectingPolicies map[string]bool,
+	finalProxyChain bool,
 ) (filterLocal string, filterRemote string, warnings []string) {
 
 	providerURLs := map[string]string{}
@@ -865,9 +872,13 @@ func convertFilters(
 				seenRemote[rpName] = true
 			}
 
-		case "MATCH":
+		case "MATCH", "FINAL":
 			policy := lowerPolicy(parts[1])
-			localLines = append(localLines, "final, "+policy+via(policy))
+			line := "final, " + policy
+			if finalProxyChain || chainAffectingPolicies[policy] {
+				line += ", via-interface=%TUN%"
+			}
+			localLines = append(localLines, line)
 
 		case "DOMAIN-SUFFIX":
 			if len(parts) < 3 {
@@ -943,7 +954,7 @@ func convertFilters(
 // Top-level assembler
 // ---------------------------------------------------------------------------
 
-func convert(config map[string]interface{}, root *yaml.Node) (string, []string) {
+func convert(config map[string]interface{}, root *yaml.Node, options converter.Options) (string, []string) {
 	var allWarnings []string
 	sections := []string{}
 
@@ -973,7 +984,7 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 		ruleProvidersMap = map[string]interface{}{}
 	}
 
-	filterLocalText, filterRemoteText, filterWarnings := convertFilters(rules, ruleProvidersMap, proxies, chainAffectingPolicies)
+	filterLocalText, filterRemoteText, filterWarnings := convertFilters(rules, ruleProvidersMap, proxies, chainAffectingPolicies, options.QXFinalProxyChain)
 	allWarnings = append(allWarnings, filterWarnings...)
 
 	sections = append(sections, filterRemoteText)

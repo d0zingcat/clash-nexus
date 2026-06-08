@@ -3,6 +3,11 @@ package converter
 
 import "gopkg.in/yaml.v3"
 
+// Options carries target-specific conversion switches.
+type Options struct {
+	QXFinalProxyChain bool
+}
+
 // Converter converts a Clash (mihomo) YAML configuration to another format.
 // Each implementation handles a specific target (e.g. Loon, Egern).
 type Converter interface {
@@ -15,4 +20,9 @@ type Converter interface {
 	// node tree into the target format. The YAML node tree is provided so
 	// converters can preserve key insertion order when needed.
 	Convert(config map[string]interface{}, root *yaml.Node) ([]byte, []string, error)
+}
+
+// OptionConverter can consume target-specific conversion options.
+type OptionConverter interface {
+	ConvertWithOptions(config map[string]interface{}, root *yaml.Node, options Options) ([]byte, []string, error)
 }

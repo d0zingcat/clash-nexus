@@ -82,6 +82,11 @@ func (s *Service) Converter(target string) (converter.Converter, bool) {
 
 // ConvertBytes converts Clash YAML bytes to the requested target format.
 func (s *Service) ConvertBytes(target string, data []byte) (Result, error) {
+	return s.ConvertBytesWithOptions(target, data, converter.Options{})
+}
+
+// ConvertBytesWithOptions converts Clash YAML bytes using target-specific options.
+func (s *Service) ConvertBytesWithOptions(target string, data []byte, options converter.Options) (Result, error) {
 	conv, ok := s.Converter(target)
 	if !ok {
 		return Result{}, fmt.Errorf("%w: %s", ErrUnknownTarget, target)
@@ -100,7 +105,14 @@ func (s *Service) ConvertBytes(target string, data []byte) (Result, error) {
 	var rootNode yaml.Node
 	_ = yaml.Unmarshal(data, &rootNode)
 
-	content, convertWarnings, err := conv.Convert(config, &rootNode)
+	var content []byte
+	var convertWarnings []string
+	var err error
+	if optConv, ok := conv.(converter.OptionConverter); ok {
+		content, convertWarnings, err = optConv.ConvertWithOptions(config, &rootNode, options)
+	} else {
+		content, convertWarnings, err = conv.Convert(config, &rootNode)
+	}
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %v", ErrConvertFailed, err)
 	}

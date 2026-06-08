@@ -87,7 +87,7 @@ func TestConvertFilters_ViaInterfaceOnlyOnProxyChainGroup(t *testing.T) {
 		"MATCH,Choose",
 	}
 
-	localText, _, _ := convertFilters(rules, nil, proxies, chainAffecting)
+	localText, _, _ := convertFilters(rules, nil, proxies, chainAffecting, true)
 
 	if !strings.Contains(localText, "host-suffix, chain.example.com, ProxyChain, via-interface=%TUN%") {
 		t.Errorf("expected via-interface=%%TUN%% for ProxyChain rule, got:\n%s", localText)
@@ -180,7 +180,7 @@ func TestConvertDNS_MultipleDoHOnOneLine(t *testing.T) {
 	}
 }
 
-func TestConvertFilters_NoViaInterfaceWithoutChain(t *testing.T) {
+func TestConvertFilters_FinalViaInterfaceCanBeDisabled(t *testing.T) {
 	proxies := buildProxies(
 		map[string]interface{}{"name": "us-ss", "type": "ss", "server": "us.example.com"},
 	)
@@ -195,9 +195,15 @@ func TestConvertFilters_NoViaInterfaceWithoutChain(t *testing.T) {
 		"MATCH,Proxy",
 	}
 
-	localText, _, _ := convertFilters(rules, nil, proxies, chainAffecting)
+	localText, _, _ := convertFilters(rules, nil, proxies, chainAffecting, false)
 
-	if strings.Contains(localText, "via-interface=%TUN%") {
-		t.Errorf("did not expect via-interface=%%TUN%% when no chain proxies, got:\n%s", localText)
+	if strings.Contains(localText, "host-suffix, example.com, proxy, via-interface=%TUN%") {
+		t.Errorf("did not expect via-interface=%%TUN%% on non-chain domain rule, got:\n%s", localText)
+	}
+	if strings.Contains(localText, "final, proxy, via-interface=%TUN%") {
+		t.Errorf("did not expect via-interface=%%TUN%% on final rule when disabled, got:\n%s", localText)
+	}
+	if !strings.Contains(localText, "final, proxy") {
+		t.Errorf("expected final rule, got:\n%s", localText)
 	}
 }
