@@ -37,6 +37,7 @@ function App() {
   const [warnings, setWarnings] = React.useState<string[]>([])
   const [status, setStatus] = React.useState("")
   const [loading, setLoading] = React.useState(false)
+  const [qxFinalProxyChain, setQXFinalProxyChain] = React.useState(false)
 
   React.useEffect(() => {
     fetch("/api/targets")
@@ -55,8 +56,11 @@ function App() {
     const link = new URL("/api/subscribe", window.location.origin)
     link.searchParams.set("target", target)
     link.searchParams.set("url", url.trim())
+    if (target === "qx" && qxFinalProxyChain) {
+      link.searchParams.set("qx_final_proxy_chain", "1")
+    }
     return link.toString()
-  }, [mode, target, url])
+  }, [mode, qxFinalProxyChain, target, url])
 
   async function parseResponse(response: Response) {
     const data = await response.json().catch(() => ({}))
@@ -77,6 +81,9 @@ function App() {
         }
         const form = new FormData()
         form.set("target", target)
+        if (target === "qx" && qxFinalProxyChain) {
+          form.set("qx_final_proxy_chain", "1")
+        }
         form.set("file", file)
         response = await fetch("/api/convert/file", { method: "POST", body: form })
       } else {
@@ -87,6 +94,7 @@ function App() {
             target,
             yaml: mode === "yaml" ? yaml : undefined,
             url: mode === "url" ? url.trim() : undefined,
+            qxFinalProxyChain: target === "qx" && qxFinalProxyChain,
           }),
         })
       }
@@ -164,6 +172,20 @@ function App() {
                   ))}
                 </div>
               </div>
+              {target === "qx" && (
+                <label className="flex items-start gap-3 rounded-md border bg-muted/25 p-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-primary"
+                    checked={qxFinalProxyChain}
+                    onChange={(event) => setQXFinalProxyChain(event.target.checked)}
+                  />
+                  <span className="grid gap-1">
+                    <span className="font-medium">Final 走 Proxy Chain</span>
+                    <span className="text-muted-foreground">为 QuanX final 规则追加 via-interface=%TUN%。</span>
+                  </span>
+                </label>
+              )}
             </div>
           </CardHeader>
           <CardContent className="pt-5">

@@ -118,6 +118,32 @@ rules:
 	}
 }
 
+func TestConvertJSONQXFinalProxyChainOption(t *testing.T) {
+	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
+	defer ts.Close()
+
+	disabled := postJSON(t, ts.URL+"/api/convert", map[string]interface{}{
+		"target": "qx",
+		"yaml":   testConfig,
+	})
+	defer disabled.Body.Close()
+	disabledBody := readConvertBody(t, disabled)
+	if strings.Contains(disabledBody.Content, "final, proxy, via-interface=%TUN%") {
+		t.Fatalf("disabled option unexpectedly added via-interface: %s", disabledBody.Content)
+	}
+
+	enabled := postJSON(t, ts.URL+"/api/convert", map[string]interface{}{
+		"target":            "qx",
+		"yaml":              testConfig,
+		"qxFinalProxyChain": true,
+	})
+	defer enabled.Body.Close()
+	enabledBody := readConvertBody(t, enabled)
+	if !strings.Contains(enabledBody.Content, "final, proxy, via-interface=%TUN%") {
+		t.Fatalf("enabled option did not add via-interface: %s", enabledBody.Content)
+	}
+}
+
 func TestSubscribe(t *testing.T) {
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, testConfig)
@@ -148,6 +174,47 @@ func TestSubscribe(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "[General]") {
 		t.Fatalf("subscription body does not look like Loon config: %s", data)
+	}
+}
+
+func TestSubscribeQXFinalProxyChainOptionAffectsCache(t *testing.T) {
+	requests := 0
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_, _ = io.WriteString(w, testConfig)
+	}))
+	defer remote.Close()
+	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
+	defer ts.Close()
+
+	baseEndpoint := ts.URL + "/api/subscribe?target=qx&url=" + urlQueryEscape(remote.URL)
+	disabledResp, err := http.Get(baseEndpoint)
+	if err != nil {
+		t.Fatalf("disabled GET subscribe error = %v", err)
+	}
+	disabledBody, _ := io.ReadAll(disabledResp.Body)
+	_ = disabledResp.Body.Close()
+	if disabledResp.StatusCode != http.StatusOK {
+		t.Fatalf("disabled status = %d, want %d", disabledResp.StatusCode, http.StatusOK)
+	}
+	if strings.Contains(string(disabledBody), "final, proxy, via-interface=%TUN%") {
+		t.Fatalf("disabled subscription unexpectedly added via-interface: %s", disabledBody)
+	}
+
+	enabledResp, err := http.Get(baseEndpoint + "&qx_final_proxy_chain=1")
+	if err != nil {
+		t.Fatalf("enabled GET subscribe error = %v", err)
+	}
+	enabledBody, _ := io.ReadAll(enabledResp.Body)
+	_ = enabledResp.Body.Close()
+	if enabledResp.StatusCode != http.StatusOK {
+		t.Fatalf("enabled status = %d, want %d", enabledResp.StatusCode, http.StatusOK)
+	}
+	if !strings.Contains(string(enabledBody), "final, proxy, via-interface=%TUN%") {
+		t.Fatalf("enabled subscription did not add via-interface: %s", enabledBody)
+	}
+	if requests != 2 {
+		t.Fatalf("remote requests = %d, want 2 distinct cache keys", requests)
 	}
 }
 
@@ -273,4 +340,25 @@ func assertConverted(t *testing.T, resp *http.Response, target string) {
 	if strings.TrimSpace(body.Content) == "" {
 		t.Fatal("content is empty")
 	}
+}
+
+type convertBody struct {
+	Target  string `json:"target"`
+	Content string `json:"content"`
+}
+
+func readConvertBody(t *testing.T, resp *http.Response) convertBody {
+	t.Helper()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want %d; body=%s", resp.StatusCode, http.StatusOK, data)
+	}
+	var body convertBody
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if strings.TrimSpace(body.Content) == "" {
+		t.Fatal("content is empty")
+	}
+	return body
 }
