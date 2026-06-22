@@ -166,7 +166,7 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 	if source == "" || strings.EqualFold(source, "clash") {
 		result, err = s.service.ConvertBytesWithOptions(target, data, options)
 	} else {
-		result, err = s.service.ConvertBytesFrom(source, target, data)
+		result, err = s.service.ConvertBytesFromWithOptions(source, target, data, options)
 	}
 	if err != nil {
 		writeAppError(w, err)
@@ -275,7 +275,7 @@ func (s *Server) writeConversion(w http.ResponseWriter, source, target string, d
 	if strings.TrimSpace(source) == "" || strings.EqualFold(strings.TrimSpace(source), "clash") {
 		result, err = s.service.ConvertBytesWithOptions(strings.TrimSpace(target), data, options)
 	} else {
-		result, err = s.service.ConvertBytesFrom(source, strings.TrimSpace(target), data)
+		result, err = s.service.ConvertBytesFromWithOptions(source, strings.TrimSpace(target), data, options)
 	}
 	if err != nil {
 		writeAppError(w, err)

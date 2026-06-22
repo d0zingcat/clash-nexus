@@ -2,6 +2,15 @@
 
 将 Clash (mihomo) YAML 配置文件转换为多种代理工具格式。
 
+也支持以 Loon `.conf` 作为输入，转换为 Clash/Mihomo YAML、Egern 或 Quantumult X：
+
+```bash
+./clash-nexus -source loon -target clash input/loon.conf
+./clash-nexus -source loon -target qx input/loon.conf
+```
+
+API、文件上传与订阅地址均可传入 `source=loon`。无法无损映射的 Loon 段或参数会以 warning 返回；例如脚本、复写、插件和未实现的传输参数不会静默丢弃。
+
 Go 实现，无需安装任何运行环境，直接下载二进制即可使用。
 
 ## 快速开始

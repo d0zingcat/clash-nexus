@@ -58,6 +58,11 @@ func NewService() *Service {
 
 // ConvertBytesFrom converts a supported source format to a target format.
 func (s *Service) ConvertBytesFrom(source, target string, data []byte) (Result, error) {
+	return s.ConvertBytesFromWithOptions(source, target, data, converter.Options{})
+}
+
+// ConvertBytesFromWithOptions converts a supported source format with target options.
+func (s *Service) ConvertBytesFromWithOptions(source, target string, data []byte, options converter.Options) (Result, error) {
 	source = strings.ToLower(strings.TrimSpace(source))
 	if source == "" || source == "clash" {
 		return s.ConvertBytes(target, data)
@@ -76,7 +81,13 @@ func (s *Service) ConvertBytesFrom(source, target string, data []byte) (Result, 
 	if !ok {
 		return Result{}, fmt.Errorf("%w: %s", ErrUnknownTarget, target)
 	}
-	content, convertWarnings, err := conv.Convert(config, nil)
+	var content []byte
+	var convertWarnings []string
+	if optConv, ok := conv.(converter.OptionConverter); ok {
+		content, convertWarnings, err = optConv.ConvertWithOptions(config, nil, options)
+	} else {
+		content, convertWarnings, err = conv.Convert(config, nil)
+	}
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %v", ErrConvertFailed, err)
 	}
