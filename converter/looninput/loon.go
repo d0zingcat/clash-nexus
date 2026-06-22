@@ -103,6 +103,12 @@ func parseProxy(line string) (map[string]interface{}, error) {
 	if len(parts) > 4 && typ == "ss" && !strings.Contains(parts[4], "=") {
 		p["password"] = strings.Trim(parts[4], "\"")
 	}
+	if len(parts) > 3 && (typ == "vmess" || typ == "vless") && !strings.Contains(parts[3], "=") {
+		p["uuid"] = strings.Trim(parts[3], "\"")
+	}
+	if len(parts) > 3 && typ == "trojan" && !strings.Contains(parts[3], "=") {
+		p["password"] = strings.Trim(parts[3], "\"")
+	}
 	for _, part := range parts[3:] {
 		if k, v, ok := strings.Cut(part, "="); ok {
 			k = strings.TrimSpace(k)
@@ -143,7 +149,16 @@ func parseGroup(line string) (map[string]interface{}, error) {
 	g := map[string]interface{}{"name": strings.TrimSpace(name), "type": typ}
 	var members []interface{}
 	for _, item := range parts[1:] {
-		if !strings.Contains(item, "=") {
+		if key, value, ok := strings.Cut(item, "="); ok {
+			switch key {
+			case "url":
+				g["url"] = value
+			case "interval", "tolerance":
+				if n, err := strconv.Atoi(value); err == nil {
+					g[key] = n
+				}
+			}
+		} else {
 			members = append(members, item)
 		}
 	}
