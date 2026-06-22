@@ -127,7 +127,36 @@ func parseProxy(line string) (map[string]interface{}, error) {
 			case "encrypt-method", "method":
 				p["cipher"] = v
 			case "alterId":
-				p["alterId"] = v
+				if n, err := strconv.Atoi(v); err == nil {
+					p["alterId"] = n
+				}
+			case "transport":
+				p["network"] = v
+			case "path":
+				p["ws-opts"] = map[string]interface{}{"path": v}
+			case "host":
+				ws, _ := p["ws-opts"].(map[string]interface{})
+				if ws == nil {
+					ws = map[string]interface{}{}
+					p["ws-opts"] = ws
+				}
+				ws["headers"] = map[string]interface{}{"Host": v}
+			case "flow":
+				p["flow"] = v
+			case "public-key":
+				r, _ := p["reality-opts"].(map[string]interface{})
+				if r == nil {
+					r = map[string]interface{}{}
+					p["reality-opts"] = r
+				}
+				r["public-key"] = v
+			case "short-id":
+				r, _ := p["reality-opts"].(map[string]interface{})
+				if r == nil {
+					r = map[string]interface{}{}
+					p["reality-opts"] = r
+				}
+				r["short-id"] = v
 			}
 		}
 	}
