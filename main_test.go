@@ -26,3 +26,11 @@ func TestNormalizeFlagArgsAllowsEqualsForm(t *testing.T) {
 		t.Fatalf("normalizeFlagArgs() = %#v, want %#v", got, want)
 	}
 }
+
+func TestNormalizeFlagArgsKeepsLoonSource(t *testing.T) {
+	got := normalizeFlagArgs([]string{"input/loon.conf", "-source", "loon", "-target", "qx"}, map[string]bool{"-source": true, "-target": true})
+	want := []string{"-source", "loon", "-target", "qx", "input/loon.conf"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalizeFlagArgs() = %#v, want %#v", got, want)
+	}
+}

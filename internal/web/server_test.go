@@ -66,6 +66,14 @@ func TestConvertJSONYAML(t *testing.T) {
 	assertConverted(t, resp, "loon")
 }
 
+func TestConvertJSONLoonToQX(t *testing.T) {
+	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
+	defer ts.Close()
+	resp := postJSON(t, ts.URL+"/api/convert", map[string]string{"source": "loon", "target": "qx", "yaml": "[Rule]\nFINAL,DIRECT\n"})
+	defer resp.Body.Close()
+	assertConverted(t, resp, "qx")
+}
+
 func TestConvertJSONURL(t *testing.T) {
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, testConfig)
@@ -174,6 +182,25 @@ func TestSubscribe(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "[General]") {
 		t.Fatalf("subscription body does not look like Loon config: %s", data)
+	}
+}
+
+func TestSubscribeLoonSource(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "[Rule]\nFINAL,DIRECT\n") }))
+	defer remote.Close()
+	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/api/subscribe?source=loon&target=clash&url=" + urlQueryEscape(remote.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "MATCH,DIRECT") {
+		t.Fatalf("body = %s", body)
 	}
 }
 
@@ -287,6 +314,26 @@ func TestConvertFile(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	assertConverted(t, resp, "loon")
+}
+
+func TestConvertFileLoonToEgern(t *testing.T) {
+	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
+	defer ts.Close()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("source", "loon")
+	_ = writer.WriteField("target", "egern")
+	part, _ := writer.CreateFormFile("file", "config.conf")
+	_, _ = part.Write([]byte("[Rule]\nFINAL,DIRECT\n"))
+	_ = writer.Close()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/convert/file", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	assertConverted(t, resp, "egern")
 }
 
 func TestConvertRejectsBadURLScheme(t *testing.T) {
