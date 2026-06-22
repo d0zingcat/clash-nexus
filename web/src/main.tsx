@@ -24,10 +24,12 @@ type ConvertResponse = {
 }
 
 type Mode = "yaml" | "file" | "url"
+type Source = "clash" | "loon"
 
 function App() {
   const [targets, setTargets] = React.useState<Target[]>([])
   const [target, setTarget] = React.useState("")
+  const [source, setSource] = React.useState<Source>("clash")
   const [mode, setMode] = React.useState<Mode>("yaml")
   const [yaml, setYaml] = React.useState("")
   const [url, setURL] = React.useState("")
@@ -55,12 +57,21 @@ function App() {
     }
     const link = new URL("/api/subscribe", window.location.origin)
     link.searchParams.set("target", target)
+    link.searchParams.set("source", source)
     link.searchParams.set("url", url.trim())
     if (target === "qx" && qxFinalProxyChain) {
       link.searchParams.set("qx_final_proxy_chain", "1")
     }
     return link.toString()
-  }, [mode, qxFinalProxyChain, target, url])
+  }, [mode, qxFinalProxyChain, source, target, url])
+
+  const visibleTargets = targets.filter((item) => source !== "loon" || item.name !== "loon")
+
+  React.useEffect(() => {
+    if (!visibleTargets.some((item) => item.name === target)) {
+      setTarget(visibleTargets[0]?.name || "")
+    }
+  }, [source, target, visibleTargets])
 
   async function parseResponse(response: Response) {
     const data = await response.json().catch(() => ({}))
@@ -75,12 +86,13 @@ function App() {
     setStatus("转换中...")
     try {
       let response: Response
-      if (mode === "file") {
+        if (mode === "file") {
         if (!file) {
           throw new Error("请选择 YAML 文件")
         }
         const form = new FormData()
-        form.set("target", target)
+          form.set("target", target)
+          form.set("source", source)
         if (target === "qx" && qxFinalProxyChain) {
           form.set("qx_final_proxy_chain", "1")
         }
@@ -92,6 +104,7 @@ function App() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             target,
+            source,
             yaml: mode === "yaml" ? yaml : undefined,
             url: mode === "url" ? url.trim() : undefined,
             qxFinalProxyChain: target === "qx" && qxFinalProxyChain,
@@ -156,9 +169,15 @@ function App() {
                 <CardDescription className="mt-1">选择来源和目标格式后转换。</CardDescription>
               </div>
               <div className="grid gap-2">
+                <Label>输入格式</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {(["clash", "loon"] as Source[]).map((item) => <Button key={item} type="button" variant={source === item ? "default" : "outline"} onClick={() => setSource(item)}>{item === "clash" ? "Clash YAML" : "Loon"}</Button>)}
+                </div>
+              </div>
+              <div className="grid gap-2">
                 <Label>目标格式</Label>
                 <div className="grid grid-cols-3 gap-2">
-                  {targets.map((item) => (
+                  {visibleTargets.map((item) => (
                     <Button
                       key={item.name}
                       type="button"
@@ -198,11 +217,11 @@ function App() {
 
               <TabsContent value="yaml">
                 <div className="grid gap-2">
-                  <Label htmlFor="yaml">Clash YAML</Label>
+                  <Label htmlFor="yaml">{source === "loon" ? "Loon 配置" : "Clash YAML"}</Label>
                   <Textarea
                     id="yaml"
                     className="min-h-[430px] resize-y font-mono text-xs leading-5"
-                    placeholder="粘贴 Clash YAML 配置"
+                    placeholder={source === "loon" ? "粘贴 Loon 配置" : "粘贴 Clash YAML 配置"}
                     value={yaml}
                     onChange={(event) => setYaml(event.target.value)}
                   />
@@ -214,10 +233,10 @@ function App() {
                   <div className="grid max-w-sm gap-4">
                     <FileUp className="mx-auto h-8 w-8 text-muted-foreground" />
                     <div>
-                      <h3 className="text-base font-medium">上传 YAML 文件</h3>
-                      <p className="mt-2 text-sm leading-6 text-muted-foreground">支持 .yaml、.yml 或纯文本配置。</p>
+                      <h3 className="text-base font-medium">上传{source === "loon" ? " Loon" : " YAML"}文件</h3>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">支持配置文件或纯文本。</p>
                     </div>
-                    <Input type="file" accept=".yaml,.yml,text/yaml,text/plain" onChange={(event) => setFile(event.target.files?.[0] || null)} />
+                    <Input type="file" accept={source === "loon" ? ".conf,text/plain" : ".yaml,.yml,text/yaml,text/plain"} onChange={(event) => setFile(event.target.files?.[0] || null)} />
                     {file && <p className="text-xs text-muted-foreground">{file.name}</p>}
                   </div>
                 </div>
@@ -226,7 +245,7 @@ function App() {
               <TabsContent value="url">
                 <div className="grid min-h-[430px] content-start gap-5">
                   <div className="grid gap-2">
-                    <Label htmlFor="url">远程 Clash 配置 URL</Label>
+                    <Label htmlFor="url">远程{source === "loon" ? " Loon" : " Clash"}配置 URL</Label>
                     <Input id="url" type="url" placeholder="https://example.com/clash.yaml" value={url} onChange={(event) => setURL(event.target.value)} />
                   </div>
                   <div className="rounded-lg border bg-muted/30 p-4">

@@ -10,15 +10,20 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"clash-nexus/converter"
+	"clash-nexus/converter/clashoutput"
 	"clash-nexus/converter/egern"
 	"clash-nexus/converter/loon"
+	"clash-nexus/converter/looninput"
 	"clash-nexus/converter/qx"
 )
 
 var (
-	ErrUnknownTarget = errors.New("unknown target")
-	ErrInvalidYAML   = errors.New("invalid yaml")
-	ErrConvertFailed = errors.New("conversion failed")
+	ErrUnknownTarget         = errors.New("unknown target")
+	ErrInvalidYAML           = errors.New("invalid yaml")
+	ErrConvertFailed         = errors.New("conversion failed")
+	ErrUnknownSource         = errors.New("unknown source")
+	ErrInvalidLoon           = errors.New("invalid loon")
+	ErrUnsupportedConversion = errors.New("unsupported conversion")
 )
 
 // Target describes a registered output format.
@@ -45,9 +50,48 @@ type Service struct {
 func NewService() *Service {
 	return &Service{registry: map[string]converter.Converter{
 		"loon":  loon.New(),
+		"clash": clashoutput.New(),
 		"egern": egern.New(),
 		"qx":    qx.New(),
 	}}
+}
+
+// ConvertBytesFrom converts a supported source format to a target format.
+func (s *Service) ConvertBytesFrom(source, target string, data []byte) (Result, error) {
+	return s.ConvertBytesFromWithOptions(source, target, data, converter.Options{})
+}
+
+// ConvertBytesFromWithOptions converts a supported source format with target options.
+func (s *Service) ConvertBytesFromWithOptions(source, target string, data []byte, options converter.Options) (Result, error) {
+	source = strings.ToLower(strings.TrimSpace(source))
+	if source == "" || source == "clash" {
+		return s.ConvertBytes(target, data)
+	}
+	if source != "loon" {
+		return Result{}, fmt.Errorf("%w: %s", ErrUnknownSource, source)
+	}
+	if strings.EqualFold(target, "loon") {
+		return Result{}, fmt.Errorf("%w: loon -> loon", ErrUnsupportedConversion)
+	}
+	config, warnings, err := looninput.Parse(data)
+	if err != nil {
+		return Result{}, fmt.Errorf("%w: %v", ErrInvalidLoon, err)
+	}
+	conv, ok := s.Converter(target)
+	if !ok {
+		return Result{}, fmt.Errorf("%w: %s", ErrUnknownTarget, target)
+	}
+	var content []byte
+	var convertWarnings []string
+	if optConv, ok := conv.(converter.OptionConverter); ok {
+		content, convertWarnings, err = optConv.ConvertWithOptions(config, nil, options)
+	} else {
+		content, convertWarnings, err = conv.Convert(config, nil)
+	}
+	if err != nil {
+		return Result{}, fmt.Errorf("%w: %v", ErrConvertFailed, err)
+	}
+	return Result{Target: conv.Name(), Filename: "converted." + conv.Name() + conv.DefaultExtension(), Extension: conv.DefaultExtension(), Content: content, Warnings: append(warnings, convertWarnings...)}, nil
 }
 
 // Targets returns all registered targets in stable order.

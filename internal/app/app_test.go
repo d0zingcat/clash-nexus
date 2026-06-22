@@ -64,3 +64,13 @@ func TestConvertBytesEmptyYAMLWarning(t *testing.T) {
 		t.Fatalf("Warnings = %#v, want empty YAML warning", result.Warnings)
 	}
 }
+
+func TestConvertLoonBytesToClash(t *testing.T) {
+	result, err := NewService().ConvertBytesFrom("loon", "clash", []byte("[Rule]\nFINAL,DIRECT\n"))
+	if err != nil {
+		t.Fatalf("ConvertBytesFrom() error = %v", err)
+	}
+	if result.Target != "clash" || !strings.Contains(string(result.Content), "rules:") {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}

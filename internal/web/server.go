@@ -81,6 +81,7 @@ func (s *Server) targets(w http.ResponseWriter, r *http.Request) {
 }
 
 type convertRequest struct {
+	Source            string `json:"source"`
 	Target            string `json:"target"`
 	YAML              string `json:"yaml"`
 	URL               string `json:"url"`
@@ -102,7 +103,7 @@ func (s *Server) convertJSON(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, err)
 		return
 	}
-	s.writeConversion(w, req.Target, data, optionsFromRequest(req))
+	s.writeConversion(w, req.Source, req.Target, data, optionsFromRequest(req))
 }
 
 func (s *Server) convertFile(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +115,7 @@ func (s *Server) convertFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target := strings.TrimSpace(r.FormValue("target"))
+	source := strings.TrimSpace(r.FormValue("source"))
 	options := optionsFromValues(r.Form)
 	file, _, err := r.FormFile("file")
 	if err != nil {
@@ -131,11 +133,12 @@ func (s *Server) convertFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "too_large", "input must be 5 MiB or smaller")
 		return
 	}
-	s.writeConversion(w, target, data, options)
+	s.writeConversion(w, source, target, data, options)
 }
 
 func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 	target := strings.TrimSpace(r.URL.Query().Get("target"))
+	source := strings.TrimSpace(r.URL.Query().Get("source"))
 	rawURL := strings.TrimSpace(r.URL.Query().Get("url"))
 	if target == "" {
 		writeError(w, http.StatusBadRequest, "bad_request", "target is required")
@@ -147,7 +150,7 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	options := optionsFromValues(r.URL.Query())
 
-	cacheKey := target + "\x00" + rawURL + "\x00" + optionsCacheKey(options)
+	cacheKey := source + "\x00" + target + "\x00" + rawURL + "\x00" + optionsCacheKey(options)
 	if result, ok := s.getCachedSubscription(cacheKey); ok {
 		w.Header().Set("X-Clash-Nexus-Cache", "HIT")
 		writeSubscription(w, result)
@@ -159,7 +162,12 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, err)
 		return
 	}
-	result, err := s.service.ConvertBytesWithOptions(target, data, options)
+	var result app.Result
+	if source == "" || strings.EqualFold(source, "clash") {
+		result, err = s.service.ConvertBytesWithOptions(target, data, options)
+	} else {
+		result, err = s.service.ConvertBytesFromWithOptions(source, target, data, options)
+	}
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -261,8 +269,14 @@ func (s *Server) fetchRemote(raw string) ([]byte, error) {
 	return data, nil
 }
 
-func (s *Server) writeConversion(w http.ResponseWriter, target string, data []byte, options converter.Options) {
-	result, err := s.service.ConvertBytesWithOptions(strings.TrimSpace(target), data, options)
+func (s *Server) writeConversion(w http.ResponseWriter, source, target string, data []byte, options converter.Options) {
+	var result app.Result
+	var err error
+	if strings.TrimSpace(source) == "" || strings.EqualFold(strings.TrimSpace(source), "clash") {
+		result, err = s.service.ConvertBytesWithOptions(strings.TrimSpace(target), data, options)
+	} else {
+		result, err = s.service.ConvertBytesFromWithOptions(source, strings.TrimSpace(target), data, options)
+	}
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -313,6 +327,8 @@ func writeAppError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, app.ErrUnknownTarget):
 		writeError(w, http.StatusBadRequest, "unknown_target", err.Error())
+	case errors.Is(err, app.ErrUnknownSource), errors.Is(err, app.ErrInvalidLoon), errors.Is(err, app.ErrUnsupportedConversion):
+		writeError(w, http.StatusBadRequest, "invalid_conversion", err.Error())
 	case errors.Is(err, app.ErrInvalidYAML):
 		writeError(w, http.StatusBadRequest, "invalid_yaml", err.Error())
 	case errors.Is(err, app.ErrConvertFailed):
