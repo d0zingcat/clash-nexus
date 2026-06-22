@@ -44,13 +44,15 @@ func runServe(service *app.Service, args []string) {
 func runConvert(service *app.Service, args []string) {
 	args = normalizeFlagArgs(args, map[string]bool{
 		"-target": true,
+		"-source": true,
 		"-input":  true,
 		"-o":      true,
 	})
 	targetHelp := service.TargetHelp()
 	fs := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ExitOnError)
 	targetFlag := fs.String("target", "", "Output format (required): "+targetHelp)
-	inputFlag := fs.String("input", "", "Path to Clash YAML config file")
+	sourceFlag := fs.String("source", "clash", "Input format: clash or loon")
+	inputFlag := fs.String("input", "", "Path to input config file")
 	outputFlag := fs.String("o", "", "Output file path (default: output/<target><ext>)")
 
 	fs.Usage = func() {
@@ -90,7 +92,7 @@ func runConvert(service *app.Service, args []string) {
 		os.Exit(1)
 	}
 
-	result, err := service.ConvertBytes(*targetFlag, data)
+	result, err := service.ConvertBytesFrom(*sourceFlag, *targetFlag, data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)

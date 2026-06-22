@@ -49,8 +49,8 @@ func TestTargets(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(body.Targets) != 3 {
-		t.Fatalf("targets = %#v, want 3 targets", body.Targets)
+	if len(body.Targets) != 4 {
+		t.Fatalf("targets = %#v, want 4 targets", body.Targets)
 	}
 }
 
