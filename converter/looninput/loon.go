@@ -33,12 +33,14 @@ func Parse(data []byte) (map[string]interface{}, []string, error) {
 				return nil, nil, fmt.Errorf("line %d [Proxy]: %w", lineNo, err)
 			}
 			proxies = append(proxies, proxy)
+			warnings = append(warnings, unsupportedParameters(line, "Proxy")...)
 		case "proxy group":
 			group, err := parseGroup(line)
 			if err != nil {
 				return nil, nil, fmt.Errorf("line %d [Proxy Group]: %w", lineNo, err)
 			}
 			groups = append(groups, group)
+			warnings = append(warnings, unsupportedParameters(line, "Proxy Group")...)
 		case "rule":
 			rule := normalizeRule(line)
 			if rule != "" {
@@ -51,6 +53,7 @@ func Parse(data []byte) (map[string]interface{}, []string, error) {
 			}
 			providers[name] = provider
 			rules = append(rules, rule)
+			warnings = append(warnings, unsupportedParameters(line, "Remote Rule")...)
 		case "", "general":
 			if section == "general" {
 				warnings = append(warnings, fmt.Sprintf("[General] entry not converted: %s", line))
@@ -75,6 +78,34 @@ func Parse(data []byte) (map[string]interface{}, []string, error) {
 		config["rules"] = rules
 	}
 	return config, warnings, nil
+}
+
+func unsupportedParameters(line, section string) []string {
+	_, value, ok := strings.Cut(line, "=")
+	if !ok {
+		return nil
+	}
+	known := map[string]bool{}
+	switch section {
+	case "Proxy":
+		for _, key := range []string{"password", "uuid", "sni", "servername", "skip-cert-verify", "over-tls", "tls", "encrypt-method", "method", "alterId", "transport", "path", "host", "flow", "public-key", "short-id"} {
+			known[key] = true
+		}
+	case "Proxy Group":
+		for _, key := range []string{"url", "interval", "tolerance"} {
+			known[key] = true
+		}
+	case "Remote Rule":
+		known["tag"], known["policy"] = true, true
+	}
+	var warnings []string
+	for _, part := range split(value) {
+		key, _, isParameter := strings.Cut(part, "=")
+		if isParameter && !known[strings.TrimSpace(key)] {
+			warnings = append(warnings, fmt.Sprintf("[%s] unsupported parameter: %s", section, strings.TrimSpace(key)))
+		}
+	}
+	return warnings
 }
 
 func parseProxy(line string) (map[string]interface{}, error) {
