@@ -15,6 +15,7 @@ import (
 	"clash-nexus/converter/loon"
 	"clash-nexus/converter/looninput"
 	"clash-nexus/converter/qx"
+	"clash-nexus/converter/stash"
 )
 
 var (
@@ -53,6 +54,7 @@ func NewService() *Service {
 		"clash": clashoutput.New(),
 		"egern": egern.New(),
 		"qx":    qx.New(),
+		"stash": stash.New(),
 	}}
 }
 
