@@ -49,8 +49,26 @@ func TestTargets(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(body.Targets) != 4 {
-		t.Fatalf("targets = %#v, want 4 targets", body.Targets)
+	targets := make(map[string]string, len(body.Targets))
+	for _, target := range body.Targets {
+		if target.Name == "" || target.Extension == "" {
+			t.Fatalf("invalid target = %#v", target)
+		}
+		if _, exists := targets[target.Name]; exists {
+			t.Fatalf("duplicate target = %q", target.Name)
+		}
+		targets[target.Name] = target.Extension
+	}
+	for name, extension := range map[string]string{
+		"clash": ".yaml",
+		"egern": ".yaml",
+		"loon":  ".conf",
+		"qx":    ".conf",
+		"stash": ".yaml",
+	} {
+		if targets[name] != extension {
+			t.Fatalf("target %q extension = %q, want %q; targets = %#v", name, targets[name], extension, targets)
+		}
 	}
 }
 

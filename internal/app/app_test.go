@@ -41,6 +41,22 @@ func TestConvertBytes(t *testing.T) {
 	}
 }
 
+func TestConvertBytesStash(t *testing.T) {
+	result, err := NewService().ConvertBytes("stash", []byte(sampleConfig))
+	if err != nil {
+		t.Fatalf("ConvertBytes() error = %v", err)
+	}
+	if result.Target != "stash" {
+		t.Fatalf("Target = %q, want %q", result.Target, "stash")
+	}
+	if result.Extension != ".yaml" {
+		t.Fatalf("Extension = %q, want %q", result.Extension, ".yaml")
+	}
+	if !strings.Contains(string(result.Content), "proxy-groups") {
+		t.Fatalf("Content = %q, want proxy-groups", result.Content)
+	}
+}
+
 func TestConvertBytesUnknownTarget(t *testing.T) {
 	_, err := NewService().ConvertBytes("missing", []byte(sampleConfig))
 	if !errors.Is(err, ErrUnknownTarget) {

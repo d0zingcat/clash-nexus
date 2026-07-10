@@ -24,6 +24,9 @@ make build
 # 转换为 Loon
 ./clash-nexus -target loon input/clash.yaml
 
+# 转换为 Stash
+./clash-nexus -target stash input/clash.yaml
+
 # 指定输出路径
 ./clash-nexus -target loon -input input/clash.yaml -o output/custom.conf
 
@@ -94,6 +97,7 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 |------|------|------------|
 | `loon` (默认) | `.conf` (INI-like) | `output/loon.conf` |
 | `egern` | `.yaml` | `output/egern.yaml` |
+| `stash` | `.yaml` | `output/stash.yaml` |
 
 ## Loon 转换
 
@@ -209,6 +213,11 @@ blackmatrix7 仓库没有 `rule/Egern` 目录。Egern 官方 FAQ 说明目前支
 - tuic、wireguard 等协议：同上
 - 非 blackmatrix7 的 Clash 格式远程规则集：需自行确认 Egern 是否支持，必要时替换为 Surge 规则集
 - Clash 的 `tun`、`sniffer` 段（Egern 侧自行配置）
+
+**Stash：**
+- 移除 Mihomo 的入站、`tun`、`sniffer` 配置
+- 无法映射的 DNS 字段会移除；Tailscale 节点仅保留 Stash 已文档字段
+- 上述移除或字段裁剪均会返回 warning
 
 ## 目录结构
 
