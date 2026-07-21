@@ -167,7 +167,7 @@ func convertGeneral(config map[string]interface{}) string {
 		"proxy-test-url = http://www.gstatic.com/generate_204",
 		"internet-test-url = http://wifi.vivo.com.cn/generate_204",
 		"test-timeout = 5",
-		"resource-parser = https://raw.githubusercontent.com/sub-store-org/Sub-Store/master/backend/dist/sub-store-parser.loon.min.js",
+		"resource-parser = https://raw.githubusercontent.com/sub-store-org/Sub-Store/release/sub-store-parser.loon.min.js",
 	)
 
 	// real-ip from fake-ip-filter
@@ -366,6 +366,12 @@ func convertVless(p map[string]interface{}) string {
 		if shortID := clash.MapGetStr(realityOpts, "short-id", ""); shortID != "" {
 			parts = append(parts, "short-id="+shortID)
 		}
+	}
+
+	if fp := clash.MapGetStr(p, "client-fingerprint", ""); fp != "" {
+		parts = append(parts, "fingerprint="+fp)
+	} else if hasReality {
+		parts = append(parts, "fingerprint=chrome")
 	}
 
 	if transport == "ws" {
@@ -773,7 +779,7 @@ func convertRemoteProxy(providers map[string]interface{}, providerOrder []string
 				lines = append(lines, fmt.Sprintf("# [WARNING] %s: %s", alias, warn))
 			}
 		}
-		lines = append(lines, fmt.Sprintf("%s = %s", alias, rawURL))
+		lines = append(lines, fmt.Sprintf("%s = %s,parser-enabled=true,udp=true,enabled=true", alias, rawURL))
 		if ef := clash.MapGetStr(cfg, "exclude-filter", ""); ef != "" {
 			lines = append(lines, fmt.Sprintf("# [NOTE] exclude-filter for %s: %s  (apply via Remote Filter if needed)", alias, ef))
 		}
@@ -793,9 +799,15 @@ func convertRemoteFilters(groups []map[string]interface{}, providers map[string]
 		filterName := name + "_Filter"
 		sources := strings.Join(uses, ",")
 		if filt != "" {
-			lines = append(lines, fmt.Sprintf(`%s = NameRegex,%s,FilterKey = "%s"`, filterName, sources, filt))
+			if strings.HasPrefix(strings.TrimPrefix(filt, "(?i)"), "^") {
+				// Already a full regex from Clash; keep as-is.
+				lines = append(lines, fmt.Sprintf(`%s = NameRegex,%s,FilterKey = "%s"`, filterName, sources, filt))
+			} else {
+				// Region-style substring filter: require match and exclude info nodes.
+				lines = append(lines, fmt.Sprintf(`%s = NameRegex,%s,FilterKey = "^(?=.*(?:%s))(?!.*(?i)(traffic|expire|剩余|到期|距离下次重置|套餐)).*$"`, filterName, sources, filt))
+			}
 		} else {
-			lines = append(lines, fmt.Sprintf(`%s = NameRegex,%s,FilterKey = "^(?i)(?!.*(traffic|expire|剩余|到期)).*$"`, filterName, sources))
+			lines = append(lines, fmt.Sprintf(`%s = NameRegex,%s,FilterKey = "^(?i)(?!.*(traffic|expire|剩余|到期|距离下次重置|套餐)).*$"`, filterName, sources))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -892,7 +904,8 @@ var unsupportedRuleTypes = map[string]bool{
 	"SRC-IP-ASN": true, "SRC-IP-CIDR": true, "IN-PORT": true,
 	"IN-TYPE": true, "IN-USER": true, "IN-NAME": true,
 	"PROCESS-PATH": true, "PROCESS-PATH-REGEX": true, "PROCESS-PATH-WILDCARD": true,
-	"PROCESS-NAME": true, "PROCESS-NAME-REGEX": true, "PROCESS-NAME-WILDCARD": true,
+	// PROCESS-NAME is supported on Loon4Mac 0.3.0(63)+; still ignored on iOS.
+	"PROCESS-NAME-REGEX": true, "PROCESS-NAME-WILDCARD": true,
 	"UID": true, "DSCP": true, "SUB-RULE": true,
 }
 
@@ -958,6 +971,23 @@ func convertRulesAndRemoteRules(rules []interface{}, ruleProviders map[string]in
 
 		case "DST-PORT":
 			localLines = append(localLines, "DEST-PORT,"+strings.Join(parts[1:], ","))
+
+		case "GEOIP":
+			// Clash supports GEOIP,LAN; Loon does not — expand to private CIDRs.
+			if len(parts) >= 2 && strings.EqualFold(parts[1], "LAN") {
+				policy := "DIRECT"
+				if len(parts) > 2 {
+					policy = parts[2]
+				}
+				for _, cidr := range []string{
+					"10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+					"169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4",
+				} {
+					localLines = append(localLines, fmt.Sprintf("IP-CIDR,%s,%s,no-resolve", cidr, policy))
+				}
+			} else {
+				localLines = append(localLines, strings.Join(parts, ","))
+			}
 
 		case "NETWORK":
 			localLines = append(localLines, "PROTOCOL,"+strings.Join(parts[1:], ","))
