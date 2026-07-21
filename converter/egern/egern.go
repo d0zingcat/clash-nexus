@@ -3,7 +3,6 @@ package egern
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -24,16 +23,18 @@ func (c *Converter) Name() string { return "egern" }
 func (c *Converter) DefaultExtension() string { return ".yaml" }
 
 // Convert transforms a Clash config map into an Egern YAML byte slice.
-func (c *Converter) Convert(config map[string]interface{}, root *yaml.Node) ([]byte, error) {
-	out := buildEgernConfig(config, root)
-	return yaml.Marshal(out)
+func (c *Converter) Convert(config map[string]interface{}, root *yaml.Node) ([]byte, []string, error) {
+	warnings := []string{}
+	out := buildEgernConfig(config, root, &warnings)
+	content, err := yaml.Marshal(out)
+	return content, warnings, err
 }
 
 // ---------------------------------------------------------------------------
 // Top-level config assembly
 // ---------------------------------------------------------------------------
 
-func buildEgernConfig(config map[string]interface{}, root *yaml.Node) map[string]interface{} {
+func buildEgernConfig(config map[string]interface{}, root *yaml.Node, warnings *[]string) map[string]interface{} {
 	out := map[string]interface{}{}
 
 	// IPv6
@@ -46,13 +47,14 @@ func buildEgernConfig(config map[string]interface{}, root *yaml.Node) map[string
 	httpPort := clash.MapGetInt(config, "port", 0)
 	socksPort := clash.MapGetInt(config, "socks-port", 0)
 	if mixedPort > 0 {
+		// Egern has separate HTTP and SOCKS listeners and no Clash-style mixed-port.
+		// Reuse mixed-port for HTTP proxy only to avoid binding two protocols to one port.
 		out["http_port"] = mixedPort
-		out["socks_port"] = mixedPort
 	} else {
 		if httpPort > 0 {
 			out["http_port"] = httpPort
 		}
-		if socksPort > 0 {
+		if socksPort > 0 && socksPort != httpPort {
 			out["socks_port"] = socksPort
 		}
 	}
@@ -77,6 +79,9 @@ func buildEgernConfig(config map[string]interface{}, root *yaml.Node) map[string
 		realIPs := make([]string, 0, len(fakeIPFilter))
 		for _, f := range fakeIPFilter {
 			if f != "*" {
+				if strings.HasPrefix(f, "+.") {
+					f = "*." + strings.TrimPrefix(f, "+.")
+				}
 				realIPs = append(realIPs, f)
 			}
 		}
@@ -104,7 +109,7 @@ func buildEgernConfig(config map[string]interface{}, root *yaml.Node) map[string
 
 	// Proxies
 	proxies := clash.ToMapSlice(config["proxies"])
-	if egernProxies := buildEgernProxies(proxies); len(egernProxies) > 0 {
+	if egernProxies := buildEgernProxies(proxies, warnings); len(egernProxies) > 0 {
 		out["proxies"] = egernProxies
 	}
 
@@ -124,7 +129,7 @@ func buildEgernConfig(config map[string]interface{}, root *yaml.Node) map[string
 	if len(ruleProviderOrder) == 0 {
 		ruleProviderOrder, _ = clash.ToOrderedMap(config["rule-providers"])
 	}
-	if egernRules := buildEgernRules(rules, ruleProvidersMap, ruleProviderOrder); len(egernRules) > 0 {
+	if egernRules := buildEgernRules(rules, ruleProvidersMap, ruleProviderOrder, warnings); len(egernRules) > 0 {
 		out["rules"] = egernRules
 	}
 
@@ -142,6 +147,10 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 	var nsPolicy map[string]interface{}
 	if dnsCfg != nil {
 		nsPolicy, _ = dnsCfg["nameserver-policy"].(map[string]interface{})
+	}
+	_, ruleProvidersMap := clash.ToOrderedMap(config["rule-providers"])
+	if ruleProvidersMap == nil {
+		ruleProvidersMap = map[string]interface{}{}
 	}
 
 	if dnsCfg == nil && len(hostsMap) == 0 {
@@ -231,7 +240,8 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 		if nsPolicy != nil {
 			for pattern, dnsServerRaw := range nsPolicy {
 				pattern = strings.TrimSpace(pattern)
-				// Determine Egern upstream name for the target
+				// Determine Egern forward target. Egern accepts either an upstream
+				// group name or a DNS server address directly.
 				var targetUpstream string
 				var serverStr string
 				switch v := dnsServerRaw.(type) {
@@ -245,25 +255,37 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 				serverStr = strings.Trim(serverStr, `'"`)
 				if serverStr == "system" || serverStr == "" {
 					targetUpstream = "bootstrap"
-				} else if strings.HasPrefix(serverStr, "https://") {
-					targetUpstream = "doh"
-				} else if strings.HasPrefix(serverStr, "tls://") {
-					targetUpstream = "dot"
-				} else if strings.HasPrefix(serverStr, "quic://") {
-					targetUpstream = "doq"
 				} else {
-					targetUpstream = "default"
+					targetUpstream = serverStr
 				}
 
 				// Convert Clash pattern to Egern forward rule type
-				if strings.HasPrefix(pattern, "geosite:") || strings.HasPrefix(pattern, "rule-set:") {
+				if strings.HasPrefix(pattern, "geosite:") {
 					// Not directly supported; emit as comment via a note
 					forward = append(forward, map[string]interface{}{
 						"_note": fmt.Sprintf("# [WARNING] pattern not supported in Egern: %s", pattern),
 					})
 					continue
 				}
-				if strings.HasPrefix(pattern, "+.") {
+				if strings.HasPrefix(pattern, "rule-set:") {
+					ruleSet := strings.TrimSpace(strings.TrimPrefix(pattern, "rule-set:"))
+					if raw, ok := ruleProvidersMap[ruleSet]; ok {
+						if cfg, ok := raw.(map[string]interface{}); ok {
+							rawURL := clash.MapGetStr(cfg, "url", "")
+							if converted, ok := convertRuleProviderURL(rawURL); ok {
+								ruleSet = converted
+							} else if rawURL != "" {
+								ruleSet = rawURL
+							}
+						}
+					}
+					forward = append(forward, map[string]interface{}{
+						"proxy_rule_set": map[string]interface{}{
+							"match": ruleSet,
+							"value": targetUpstream,
+						},
+					})
+				} else if strings.HasPrefix(pattern, "+.") {
 					// +.cn → domain_suffix cn
 					suffix := pattern[2:]
 					forward = append(forward, map[string]interface{}{
@@ -274,14 +296,14 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 					})
 					// Also add wildcard for *.suffix
 					forward = append(forward, map[string]interface{}{
-						"wildcard": map[string]interface{}{
+						"domain_wildcard": map[string]interface{}{
 							"match": "*." + suffix,
 							"value": targetUpstream,
 						},
 					})
 				} else if strings.Contains(pattern, "*") {
 					forward = append(forward, map[string]interface{}{
-						"wildcard": map[string]interface{}{
+						"domain_wildcard": map[string]interface{}{
 							"match": pattern,
 							"value": targetUpstream,
 						},
@@ -300,7 +322,7 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 		// Add catch-all forward rule
 		if catchAll != "" {
 			forward = append(forward, map[string]interface{}{
-				"wildcard": map[string]interface{}{
+				"domain_wildcard": map[string]interface{}{
 					"match": "*",
 					"value": catchAll,
 				},
@@ -336,7 +358,7 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 // Proxies
 // ---------------------------------------------------------------------------
 
-func buildEgernProxies(proxies []map[string]interface{}) []map[string]interface{} {
+func buildEgernProxies(proxies []map[string]interface{}, warnings *[]string) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(proxies))
 	for _, p := range proxies {
 		ptype := strings.ToLower(clash.MapGetStr(p, "type", ""))
@@ -358,7 +380,7 @@ func buildEgernProxies(proxies []map[string]interface{}) []map[string]interface{
 			entry = convertHTTPToEgern(p)
 		default:
 			name := clash.MapGetStr(p, "name", "?")
-			fmt.Fprintf(os.Stderr, "[WARNING] skipping proxy %q (type: %s) — not supported by Egern\n", name, ptype)
+			addWarning(warnings, "skipping proxy %q (type: %s): not supported by Egern", name, ptype)
 			continue
 		}
 		if entry != nil {
@@ -480,14 +502,10 @@ func buildVmessVlessTransport(network string, tls bool, sni string, skipVerify b
 			}
 			if headers, ok := clash.MapGet[map[string]interface{}](wsOpts, "headers"); ok {
 				if host := clash.MapGetStr(headers, "Host", ""); host != "" {
-					if tls {
-						ws["sni"] = host
-					} else {
-						if ws["headers"] == nil {
-							ws["headers"] = map[string]interface{}{}
-						}
-						ws["headers"].(map[string]interface{})["Host"] = host
+					if ws["headers"] == nil {
+						ws["headers"] = map[string]interface{}{}
 					}
+					ws["headers"].(map[string]interface{})["Host"] = host
 				}
 			}
 		}
@@ -728,6 +746,14 @@ func buildEgernPolicyGroups(
 		}
 		return ""
 	}
+	providerInterval := func(name string) int {
+		if raw, ok := providersMap[name]; ok {
+			if cfg, ok := raw.(map[string]interface{}); ok {
+				return clash.MapGetInt(cfg, "interval", 0)
+			}
+		}
+		return 0
+	}
 
 	for _, g := range groups {
 		name := clash.MapGetStr(g, "name", "")
@@ -767,6 +793,12 @@ func buildEgernPolicyGroups(
 			if timeout > 0 {
 				ext["timeout"] = timeout
 			}
+			for _, u := range usesList {
+				if updateInterval := providerInterval(u); updateInterval > 0 {
+					ext["update_interval"] = updateInterval
+					break
+				}
+			}
 			out = append(out, map[string]interface{}{"external": ext})
 
 		} else if len(usesList) > 0 && len(proxiesList) > 0 {
@@ -783,6 +815,9 @@ func buildEgernPolicyGroups(
 					}
 					if subFilter != "" {
 						subExt["filter"] = subFilter
+					}
+					if updateInterval := providerInterval(u); updateInterval > 0 {
+						subExt["update_interval"] = updateInterval
 					}
 					out = append(out, map[string]interface{}{"external": subExt})
 					subGroupNames = append(subGroupNames, subName)
@@ -822,6 +857,9 @@ func buildEgernPolicyGroups(
 			"name": pname,
 			"type": "select",
 			"urls": []string{url},
+		}
+		if updateInterval := clash.MapGetInt(cfg, "interval", 0); updateInterval > 0 {
+			ext["update_interval"] = updateInterval
 		}
 		if ef := clash.MapGetStr(cfg, "filter", ""); ef != "" {
 			ext["filter"] = ef
@@ -888,13 +926,20 @@ func buildEgernRules(
 	rules []interface{},
 	ruleProviders map[string]interface{},
 	ruleProviderOrder []string,
+	warnings *[]string,
 ) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(rules))
 
 	providerURLs := map[string]string{}
 	for rpName, rpCfgRaw := range ruleProviders {
 		if rpCfg, ok := rpCfgRaw.(map[string]interface{}); ok {
-			providerURLs[rpName] = clash.MapGetStr(rpCfg, "url", "")
+			rawURL := clash.MapGetStr(rpCfg, "url", "")
+			egernURL, ok := convertRuleProviderURL(rawURL)
+			if !ok {
+				addWarning(warnings, "skipping rule-provider %q: Egern conversion only supports blackmatrix7 Surge rule sets (got %s)", rpName, rawURL)
+				continue
+			}
+			providerURLs[rpName] = egernURL
 		}
 	}
 
@@ -1013,4 +1058,42 @@ func convertRuleToEgern(ruleType, match, policy string, noResolve bool, provider
 		// Unknown rule type — skip
 		return nil
 	}
+}
+
+func convertRuleProviderURL(url string) (string, bool) {
+	if !strings.Contains(url, "blackmatrix7/ios_rule_script") {
+		return "", false
+	}
+	if strings.Contains(url, "rule/Clash/") {
+		url = strings.ReplaceAll(url, "rule/Clash/", "rule/Surge/")
+		url = replaceRuleProviderExt(url, ".list")
+		return url, true
+	}
+	if strings.Contains(url, "rule/Surge/") {
+		return url, true
+	}
+	return "", false
+}
+
+func replaceRuleProviderExt(raw, ext string) string {
+	splitAt := len(raw)
+	for _, sep := range []string{"?", "#"} {
+		if idx := strings.Index(raw, sep); idx >= 0 && idx < splitAt {
+			splitAt = idx
+		}
+	}
+	head, tail := raw[:splitAt], raw[splitAt:]
+	for _, oldExt := range []string{".yaml", ".yml"} {
+		if strings.HasSuffix(head, oldExt) {
+			return strings.TrimSuffix(head, oldExt) + ext + tail
+		}
+	}
+	return raw
+}
+
+func addWarning(warnings *[]string, format string, args ...interface{}) {
+	if warnings == nil {
+		return
+	}
+	*warnings = append(*warnings, fmt.Sprintf(format, args...))
 }
