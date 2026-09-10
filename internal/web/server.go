@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"clash-nexus/converter"
+	"clash-nexus/converter/clash"
 	"clash-nexus/internal/app"
 )
 
@@ -42,21 +43,25 @@ type cachedSubscription struct {
 
 // NewServer creates a local web/API server.
 func NewServer(service *app.Service) *Server {
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+				return errors.New("redirected to unsupported URL scheme")
+			}
+			return nil
+		},
+	}
+	if service != nil {
+		service.SetClashFetcher(clash.NewDefaultFetcher(client, ""))
+	}
 	return &Server{
 		service:        service,
 		subscribeCache: map[string]cachedSubscription{},
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 5 {
-					return errors.New("too many redirects")
-				}
-				if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-					return errors.New("redirected to unsupported URL scheme")
-				}
-				return nil
-			},
-		},
+		client:         client,
 	}
 }
 
@@ -81,11 +86,12 @@ func (s *Server) targets(w http.ResponseWriter, r *http.Request) {
 }
 
 type convertRequest struct {
-	Source            string `json:"source"`
-	Target            string `json:"target"`
-	YAML              string `json:"yaml"`
-	URL               string `json:"url"`
-	QXFinalProxyChain bool   `json:"qxFinalProxyChain"`
+	Source               string `json:"source"`
+	Target               string `json:"target"`
+	YAML                 string `json:"yaml"`
+	URL                  string `json:"url"`
+	QXFinalProxyChain    bool   `json:"qxFinalProxyChain"`
+	ExpandProxyProviders bool   `json:"expandProxyProviders"`
 }
 
 func (s *Server) convertJSON(w http.ResponseWriter, r *http.Request) {
@@ -291,18 +297,29 @@ func (s *Server) writeConversion(w http.ResponseWriter, source, target string, d
 }
 
 func optionsFromRequest(req convertRequest) converter.Options {
-	return converter.Options{QXFinalProxyChain: req.QXFinalProxyChain}
+	return converter.Options{
+		QXFinalProxyChain:    req.QXFinalProxyChain,
+		ExpandProxyProviders: req.ExpandProxyProviders,
+	}
 }
 
 func optionsFromValues(values url.Values) converter.Options {
-	return converter.Options{QXFinalProxyChain: parseBool(values.Get("qx_final_proxy_chain"))}
+	return converter.Options{
+		QXFinalProxyChain:    parseBool(values.Get("qx_final_proxy_chain")),
+		ExpandProxyProviders: parseBool(values.Get("expand_proxy_providers")),
+	}
 }
 
 func optionsCacheKey(options converter.Options) string {
+	qx := "0"
 	if options.QXFinalProxyChain {
-		return "qx_final_proxy_chain=1"
+		qx = "1"
 	}
-	return "qx_final_proxy_chain=0"
+	expand := "0"
+	if options.ExpandProxyProviders {
+		expand = "1"
+	}
+	return "qx_final_proxy_chain=" + qx + "&expand_proxy_providers=" + expand
 }
 
 func parseBool(raw string) bool {
