@@ -315,3 +315,135 @@ func TestDefaultFetcherLocalFile(t *testing.T) {
 		t.Fatalf("got %s, want %s", string(data), string(content))
 	}
 }
+
+func TestExpandProxyProvidersNegativeLookahead(t *testing.T) {
+	providerYAML := `
+proxies:
+  - name: "HK 01"
+    type: ss
+    server: 1.1.1.1
+    port: 8388
+  - name: "SG 01"
+    type: ss
+    server: 2.2.2.2
+    port: 8388
+  - name: "US Traffic Expire"
+    type: ss
+    server: 3.3.3.3
+    port: 8388
+  - name: "剩余流量 50G"
+    type: ss
+    server: 4.4.4.4
+    port: 8388
+`
+	config := map[string]interface{}{
+		"proxy-providers": map[string]interface{}{
+			"sub-a": map[string]interface{}{
+				"type": "http",
+				"url":  "https://a.com",
+			},
+		},
+		"proxy-groups": []interface{}{
+			map[string]interface{}{
+				"name":   "All Nodes",
+				"type":   "select",
+				"use":    []interface{}{"sub-a"},
+				"filter": `(?i)^(?!.*traffic|expire|剩余|到期).*$`,
+			},
+		},
+	}
+
+	fetcher := &mockFetcher{
+		responses: map[string][]byte{
+			"https://a.com": []byte(providerYAML),
+		},
+	}
+
+	warnings, err := ExpandProxyProviders(config, ExpandOptions{Fetcher: fetcher})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) > 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+
+	groups := ToMapSlice(config["proxy-groups"])
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(groups))
+	}
+
+	proxies := ToStringSlice(groups[0]["proxies"])
+	expected := []string{"HK 01", "SG 01"}
+	if len(proxies) != len(expected) {
+		t.Fatalf("expected proxies %#v, got %#v", expected, proxies)
+	}
+	for i, name := range expected {
+		if proxies[i] != name {
+			t.Errorf("proxy %d: want %q, got %q", i, name, proxies[i])
+		}
+	}
+}
+
+func TestExpandProxyProvidersGroupExcludeFilter(t *testing.T) {
+	providerYAML := `
+proxies:
+  - name: "HK 01"
+    type: ss
+    server: 1.1.1.1
+    port: 8388
+  - name: "SG 01"
+    type: ss
+    server: 2.2.2.2
+    port: 8388
+  - name: "US 01"
+    type: ss
+    server: 3.3.3.3
+    port: 8388
+  - name: "Test Node"
+    type: ss
+    server: 4.4.4.4
+    port: 8388
+`
+	config := map[string]interface{}{
+		"proxy-providers": map[string]interface{}{
+			"sub-a": map[string]interface{}{
+				"type": "http",
+				"url":  "https://a.com",
+			},
+		},
+		"proxy-groups": []interface{}{
+			map[string]interface{}{
+				"name":           "Auto",
+				"type":           "url-test",
+				"use":            []interface{}{"sub-a"},
+				"exclude-filter": `(?i)us|test`,
+			},
+		},
+	}
+
+	fetcher := &mockFetcher{
+		responses: map[string][]byte{
+			"https://a.com": []byte(providerYAML),
+		},
+	}
+
+	warnings, err := ExpandProxyProviders(config, ExpandOptions{Fetcher: fetcher})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) > 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+
+	groups := ToMapSlice(config["proxy-groups"])
+	proxies := ToStringSlice(groups[0]["proxies"])
+	expected := []string{"HK 01", "SG 01"}
+	if len(proxies) != len(expected) {
+		t.Fatalf("expected proxies %#v, got %#v", expected, proxies)
+	}
+	for i, name := range expected {
+		if proxies[i] != name {
+			t.Errorf("proxy %d: want %q, got %q", i, name, proxies[i])
+		}
+	}
+}

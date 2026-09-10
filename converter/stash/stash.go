@@ -489,7 +489,7 @@ var stashProxyFields = map[string]map[string]struct{}{
 }
 
 var stashProxyGroupFields = fieldSet(
-	"name", "type", "proxies", "use", "filter", "include-all", "url", "interval",
+	"name", "type", "proxies", "use", "filter", "exclude-filter", "exclude-type", "include-all", "url", "interval",
 	"lazy", "strategy", "tolerance", "ssid-policy", "icon",
 	"benchmark-url", "benchmark-timeout", "benchmark-disabled",
 )
