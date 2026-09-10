@@ -656,3 +656,45 @@ func containsWarningForField(warnings []string, field string) bool {
 	}
 	return false
 }
+
+func TestConvertPreservesProxyGroupExcludeFilter(t *testing.T) {
+	input := map[string]interface{}{
+		"proxy-groups": []interface{}{
+			map[string]interface{}{
+				"name":           "All Nodes",
+				"type":           "select",
+				"use":            []interface{}{"sub-a"},
+				"exclude-filter": "(?i)traffic|expire",
+				"exclude-type":   "ss",
+			},
+		},
+	}
+
+	c := New()
+	out, _, err := c.Convert(input, nil)
+	if err != nil {
+		t.Fatalf("Convert() failed: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := yaml.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("failed to unmarshal output: %v", err)
+	}
+
+	groups, ok := parsed["proxy-groups"].([]interface{})
+	if !ok || len(groups) != 1 {
+		t.Fatalf("expected 1 group, got %v", parsed["proxy-groups"])
+	}
+
+	group, ok := groups[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected group to be map[string]interface{}, got %T", groups[0])
+	}
+
+	if group["exclude-filter"] != "(?i)traffic|expire" {
+		t.Errorf("exclude-filter not preserved: %v", group["exclude-filter"])
+	}
+	if group["exclude-type"] != "ss" {
+		t.Errorf("exclude-type not preserved: %v", group["exclude-type"])
+	}
+}

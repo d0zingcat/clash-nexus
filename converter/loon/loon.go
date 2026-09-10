@@ -796,9 +796,18 @@ func convertRemoteFilters(groups []map[string]interface{}, providers map[string]
 		}
 		name := clash.MapGetStr(g, "name", "")
 		filt := clash.MapGetStr(g, "filter", "")
+		excludeFilt := clash.MapGetStr(g, "exclude-filter", "")
 		filterName := name + "_Filter"
 		sources := strings.Join(uses, ",")
-		if filt != "" {
+		if excludeFilt != "" {
+			cleanExclude := strings.TrimPrefix(excludeFilt, "(?i)")
+			if filt != "" {
+				cleanFilt := strings.TrimPrefix(filt, "(?i)")
+				lines = append(lines, fmt.Sprintf(`%s = NameRegex,%s,FilterKey = "^(?=.*(?:%s))(?!.*(?i)(%s)).*$"`, filterName, sources, cleanFilt, cleanExclude))
+			} else {
+				lines = append(lines, fmt.Sprintf(`%s = NameRegex,%s,FilterKey = "^(?i)(?!.*(%s)).*$"`, filterName, sources, cleanExclude))
+			}
+		} else if filt != "" {
 			if strings.HasPrefix(strings.TrimPrefix(filt, "(?i)"), "^") {
 				// Already a full regex from Clash; keep as-is.
 				lines = append(lines, fmt.Sprintf(`%s = NameRegex,%s,FilterKey = "%s"`, filterName, sources, filt))

@@ -141,3 +141,30 @@ func TestConvertAnyTLS(t *testing.T) {
 		}
 	}
 }
+
+func TestConvertRemoteFiltersWithExcludeFilter(t *testing.T) {
+	groups := []map[string]interface{}{
+		{
+			"name":           "GroupA",
+			"use":            []interface{}{"sub1"},
+			"exclude-filter": "(?i)traffic|expire",
+		},
+		{
+			"name":           "GroupB",
+			"use":            []interface{}{"sub1"},
+			"filter":         "HK",
+			"exclude-filter": "0.1x",
+		},
+	}
+
+	got := convertRemoteFilters(groups, nil)
+	wantA := `GroupA_Filter = NameRegex,sub1,FilterKey = "^(?i)(?!.*(traffic|expire)).*$"`
+	wantB := `GroupB_Filter = NameRegex,sub1,FilterKey = "^(?=.*(?:HK))(?!.*(?i)(0.1x)).*$"`
+
+	if !strings.Contains(got, wantA) {
+		t.Fatalf("convertRemoteFilters() missing %s in:\n%s", wantA, got)
+	}
+	if !strings.Contains(got, wantB) {
+		t.Fatalf("convertRemoteFilters() missing %s in:\n%s", wantB, got)
+	}
+}

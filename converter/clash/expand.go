@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/dlclark/regexp2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -254,13 +254,13 @@ func ExpandProxyProviders(config map[string]interface{}, opts ExpandOptions) ([]
 			}
 
 			// Apply provider-level filters against original name and type
-			if pFilter != nil && !pFilter.MatchString(origName) {
+			if pFilter != nil && !matchFilter(pFilter, origName) {
 				continue
 			}
-			if pExcludeFilter != nil && pExcludeFilter.MatchString(origName) {
+			if matchFilter(pExcludeFilter, origName) {
 				continue
 			}
-			if pExcludeType != nil && pExcludeType.MatchString(proxyType) {
+			if matchFilter(pExcludeType, proxyType) {
 				continue
 			}
 
@@ -336,13 +336,13 @@ func ExpandProxyProviders(config map[string]interface{}, opts ExpandOptions) ([]
 
 			for _, node := range nodes {
 				// Evaluate group filters against node original name and type
-				if gFilter != nil && !gFilter.MatchString(node.OriginalName) {
+				if gFilter != nil && !matchFilter(gFilter, node.OriginalName) {
 					continue
 				}
-				if gExcludeFilter != nil && gExcludeFilter.MatchString(node.OriginalName) {
+				if matchFilter(gExcludeFilter, node.OriginalName) {
 					continue
 				}
-				if gExcludeType != nil && gExcludeType.MatchString(node.Type) {
+				if matchFilter(gExcludeType, node.Type) {
 					continue
 				}
 
@@ -400,10 +400,18 @@ func parseProviderProxies(data []byte) ([]map[string]interface{}, error) {
 	return nil, errors.New("no proxies found in YAML content")
 }
 
-func compileFilter(pattern string) (*regexp.Regexp, error) {
+func compileFilter(pattern string) (*regexp2.Regexp, error) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
 		return nil, nil
 	}
-	return regexp.Compile(pattern)
+	return regexp2.Compile(pattern, regexp2.None)
+}
+
+func matchFilter(re *regexp2.Regexp, s string) bool {
+	if re == nil {
+		return false
+	}
+	matched, _ := re.MatchString(s)
+	return matched
 }
