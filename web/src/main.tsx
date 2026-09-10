@@ -40,6 +40,7 @@ function App() {
   const [status, setStatus] = React.useState("")
   const [loading, setLoading] = React.useState(false)
   const [qxFinalProxyChain, setQXFinalProxyChain] = React.useState(false)
+  const [expandProxyProviders, setExpandProxyProviders] = React.useState(false)
 
   React.useEffect(() => {
     fetch("/api/targets")
@@ -62,8 +63,11 @@ function App() {
     if (target === "qx" && qxFinalProxyChain) {
       link.searchParams.set("qx_final_proxy_chain", "1")
     }
+    if (target === "clash" && expandProxyProviders) {
+      link.searchParams.set("expand_proxy_providers", "1")
+    }
     return link.toString()
-  }, [mode, qxFinalProxyChain, source, target, url])
+  }, [expandProxyProviders, mode, qxFinalProxyChain, source, target, url])
 
   const visibleTargets = targets.filter((item) => source !== "loon" || item.name !== "loon")
 
@@ -96,6 +100,9 @@ function App() {
         if (target === "qx" && qxFinalProxyChain) {
           form.set("qx_final_proxy_chain", "1")
         }
+        if (target === "clash" && expandProxyProviders) {
+          form.set("expand_proxy_providers", "1")
+        }
         form.set("file", file)
         response = await fetch("/api/convert/file", { method: "POST", body: form })
       } else {
@@ -108,6 +115,7 @@ function App() {
             yaml: mode === "yaml" ? yaml : undefined,
             url: mode === "url" ? url.trim() : undefined,
             qxFinalProxyChain: target === "qx" && qxFinalProxyChain,
+            expandProxyProviders: target === "clash" && expandProxyProviders,
           }),
         })
       }
@@ -202,6 +210,20 @@ function App() {
                   <span className="grid gap-1">
                     <span className="font-medium">Final 走 Proxy Chain</span>
                     <span className="text-muted-foreground">为 QuanX final 规则追加 via-interface=%TUN%。</span>
+                  </span>
+                </label>
+              )}
+              {target === "clash" && (
+                <label className="flex items-start gap-3 rounded-md border bg-muted/25 p-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-primary"
+                    checked={expandProxyProviders}
+                    onChange={(event) => setExpandProxyProviders(event.target.checked)}
+                  />
+                  <span className="grid gap-1">
+                    <span className="font-medium">展开 Proxy Provider 节点</span>
+                    <span className="text-muted-foreground">将 proxy-providers 中的节点展开并固定到 proxies 与 proxy-groups，移除 use 语法，避免部分客户端仅显示 COMPATIBLE 且无法切换节点。</span>
                   </span>
                 </label>
               )}

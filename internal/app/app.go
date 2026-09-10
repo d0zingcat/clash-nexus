@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"clash-nexus/converter"
+	"clash-nexus/converter/clash"
 	"clash-nexus/converter/clashoutput"
 	"clash-nexus/converter/egern"
 	"clash-nexus/converter/loon"
@@ -49,13 +50,25 @@ type Service struct {
 
 // NewService returns a service with all built-in converters registered.
 func NewService() *Service {
+	return NewServiceWithFetcher(nil)
+}
+
+// NewServiceWithFetcher returns a service with custom fetcher for clash converter.
+func NewServiceWithFetcher(fetcher clash.ProviderFetcher) *Service {
 	return &Service{registry: map[string]converter.Converter{
 		"loon":  loon.New(),
-		"clash": clashoutput.New(),
+		"clash": clashoutput.NewWithFetcher(fetcher),
 		"egern": egern.New(),
 		"qx":    qx.New(),
 		"stash": stash.New(),
 	}}
+}
+
+// SetClashFetcher updates the fetcher used by the clash converter.
+func (s *Service) SetClashFetcher(fetcher clash.ProviderFetcher) {
+	if conv, ok := s.registry["clash"].(*clashoutput.Converter); ok {
+		conv.Fetcher = fetcher
+	}
 }
 
 // ConvertBytesFrom converts a supported source format to a target format.
@@ -67,7 +80,7 @@ func (s *Service) ConvertBytesFrom(source, target string, data []byte) (Result, 
 func (s *Service) ConvertBytesFromWithOptions(source, target string, data []byte, options converter.Options) (Result, error) {
 	source = strings.ToLower(strings.TrimSpace(source))
 	if source == "" || source == "clash" {
-		return s.ConvertBytes(target, data)
+		return s.ConvertBytesWithOptions(target, data, options)
 	}
 	if source != "loon" {
 		return Result{}, fmt.Errorf("%w: %s", ErrUnknownSource, source)

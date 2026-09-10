@@ -1,14 +1,42 @@
 // Package clashoutput serializes the shared Clash/Mihomo model.
 package clashoutput
 
-import "gopkg.in/yaml.v3"
+import (
+	"gopkg.in/yaml.v3"
 
-type Converter struct{}
+	"clash-nexus/converter"
+	"clash-nexus/converter/clash"
+)
 
-func New() *Converter                         { return &Converter{} }
+type Converter struct {
+	Fetcher clash.ProviderFetcher
+}
+
+func New() *Converter { return &Converter{} }
+func NewWithFetcher(fetcher clash.ProviderFetcher) *Converter {
+	return &Converter{Fetcher: fetcher}
+}
+
 func (c *Converter) Name() string             { return "clash" }
 func (c *Converter) DefaultExtension() string { return ".yaml" }
-func (c *Converter) Convert(config map[string]interface{}, _ *yaml.Node) ([]byte, []string, error) {
+
+func (c *Converter) Convert(config map[string]interface{}, root *yaml.Node) ([]byte, []string, error) {
+	return c.ConvertWithOptions(config, root, converter.Options{})
+}
+
+func (c *Converter) ConvertWithOptions(config map[string]interface{}, root *yaml.Node, options converter.Options) ([]byte, []string, error) {
+	var warnings []string
+	if options.ExpandProxyProviders {
+		expandWarnings, err := clash.ExpandProxyProviders(config, clash.ExpandOptions{
+			Fetcher:  c.Fetcher,
+			BasePath: options.BasePath,
+			RootNode: root,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		warnings = append(warnings, expandWarnings...)
+	}
 	data, err := yaml.Marshal(config)
-	return data, nil, err
+	return data, warnings, err
 }

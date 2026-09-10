@@ -34,3 +34,15 @@ func TestNormalizeFlagArgsKeepsLoonSource(t *testing.T) {
 		t.Fatalf("normalizeFlagArgs() = %#v, want %#v", got, want)
 	}
 }
+
+func TestNormalizeFlagArgsBooleanFlag(t *testing.T) {
+	got := normalizeFlagArgs(
+		[]string{"input/example.yaml", "-target", "clash", "-expand-proxy-providers"},
+		map[string]bool{"-target": true, "-source": true, "-input": true, "-o": true},
+	)
+	want := []string{"-target", "clash", "-expand-proxy-providers", "input/example.yaml"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalizeFlagArgs() = %#v, want %#v", got, want)
+	}
+}
+

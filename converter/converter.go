@@ -5,7 +5,9 @@ import "gopkg.in/yaml.v3"
 
 // Options carries target-specific conversion switches.
 type Options struct {
-	QXFinalProxyChain bool
+	QXFinalProxyChain    bool
+	ExpandProxyProviders bool
+	BasePath             string
 }
 
 // Converter converts a Clash (mihomo) YAML configuration to another format.

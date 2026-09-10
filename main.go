@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"clash-nexus/converter"
 	"clash-nexus/internal/app"
 	"clash-nexus/internal/web"
 )
@@ -54,6 +55,7 @@ func runConvert(service *app.Service, args []string) {
 	sourceFlag := fs.String("source", "clash", "Input format: clash or loon")
 	inputFlag := fs.String("input", "", "Path to input config file")
 	outputFlag := fs.String("o", "", "Output file path (default: output/<target><ext>)")
+	expandProvidersFlag := fs.Bool("expand-proxy-providers", false, "Expand proxy-providers into static proxies and proxy-groups (clash target)")
 
 	fs.Usage = func() {
 		cmd := filepath.Base(os.Args[0])
@@ -69,6 +71,7 @@ func runConvert(service *app.Service, args []string) {
 		fmt.Fprintf(os.Stderr, "\nAvailable targets: %s\n\n", targetHelp)
 		fmt.Fprintf(os.Stderr, "Examples:\n")
 		fmt.Fprintf(os.Stderr, "  %s -target egern input/clash.yaml\n", cmd)
+		fmt.Fprintf(os.Stderr, "  %s -target clash -expand-proxy-providers input/clash.yaml\n", cmd)
 		fmt.Fprintf(os.Stderr, "  %s -target loon -input input/clash.yaml -o output/custom.conf\n", cmd)
 		fmt.Fprintf(os.Stderr, "  %s serve -addr 127.0.0.1:8080\n\n", cmd)
 		fmt.Fprintf(os.Stderr, "Output:\n")
@@ -92,7 +95,11 @@ func runConvert(service *app.Service, args []string) {
 		os.Exit(1)
 	}
 
-	result, err := service.ConvertBytesFrom(*sourceFlag, *targetFlag, data)
+	options := converter.Options{
+		ExpandProxyProviders: *expandProvidersFlag,
+		BasePath:             filepath.Dir(inputPath),
+	}
+	result, err := service.ConvertBytesFromWithOptions(*sourceFlag, *targetFlag, data, options)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)
@@ -130,11 +137,15 @@ func normalizeFlagArgs(args []string, flagsWithValue map[string]bool) []string {
 		if idx := strings.Index(arg, "="); idx >= 0 {
 			name = arg[:idx]
 		}
-		if strings.HasPrefix(arg, "-") && flagsWithValue[name] {
-			flags = append(flags, arg)
-			if !strings.Contains(arg, "=") && i+1 < len(args) {
-				i++
-				flags = append(flags, args[i])
+		if strings.HasPrefix(arg, "-") {
+			if flagsWithValue[name] {
+				flags = append(flags, arg)
+				if !strings.Contains(arg, "=") && i+1 < len(args) {
+					i++
+					flags = append(flags, args[i])
+				}
+			} else {
+				flags = append(flags, arg)
 			}
 			continue
 		}

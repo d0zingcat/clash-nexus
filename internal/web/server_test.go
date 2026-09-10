@@ -427,3 +427,109 @@ func readConvertBody(t *testing.T, resp *http.Response) convertBody {
 	}
 	return body
 }
+
+func TestConvertJSONExpandProxyProviders(t *testing.T) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `
+proxies:
+  - name: RemoteExpandedNode
+    type: ss
+    server: 1.1.1.1
+    port: 8388
+`)
+	}))
+	defer providerServer.Close()
+
+	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
+	defer ts.Close()
+
+	config := `
+proxy-providers:
+  p1:
+    type: http
+    url: ` + providerServer.URL + `
+proxy-groups:
+  - name: Group
+    type: select
+    use: [p1]
+`
+	// Without expand
+	respNoExpand := postJSON(t, ts.URL+"/api/convert", map[string]interface{}{
+		"target": "clash",
+		"yaml":   config,
+		"expandProxyProviders": false,
+	})
+	bodyNoExpand := readConvertBody(t, respNoExpand)
+	if !strings.Contains(bodyNoExpand.Content, "proxy-providers:") {
+		t.Fatalf("expected proxy-providers in unexpanded output: %s", bodyNoExpand.Content)
+	}
+
+	// With expand
+	respExpand := postJSON(t, ts.URL+"/api/convert", map[string]interface{}{
+		"target": "clash",
+		"yaml":   config,
+		"expandProxyProviders": true,
+	})
+	bodyExpand := readConvertBody(t, respExpand)
+	if strings.Contains(bodyExpand.Content, "proxy-providers:") {
+		t.Fatalf("proxy-providers should be removed in expanded output: %s", bodyExpand.Content)
+	}
+	if !strings.Contains(bodyExpand.Content, "RemoteExpandedNode") {
+		t.Fatalf("expected RemoteExpandedNode in expanded output: %s", bodyExpand.Content)
+	}
+}
+
+func TestSubscribeExpandProxyProvidersSegregatesCache(t *testing.T) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `
+proxies:
+  - name: SubNode
+    type: ss
+    server: 1.1.1.1
+    port: 8388
+`)
+	}))
+	defer providerServer.Close()
+
+	clashConfigServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `
+proxy-providers:
+  p1:
+    type: http
+    url: `+providerServer.URL+`
+proxy-groups:
+  - name: Group
+    type: select
+    use: [p1]
+`)
+	}))
+	defer clashConfigServer.Close()
+
+	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
+	defer ts.Close()
+
+	base := ts.URL + "/api/subscribe?target=clash&url=" + urlQueryEscape(clashConfigServer.URL)
+	unexpandedResp, err := http.Get(base + "&expand_proxy_providers=0")
+	if err != nil {
+		t.Fatalf("unexpanded error = %v", err)
+	}
+	unexpandedData, _ := io.ReadAll(unexpandedResp.Body)
+	_ = unexpandedResp.Body.Close()
+	if !strings.Contains(string(unexpandedData), "proxy-providers:") {
+		t.Fatalf("expected proxy-providers in unexpanded: %s", unexpandedData)
+	}
+
+	expandedResp, err := http.Get(base + "&expand_proxy_providers=1")
+	if err != nil {
+		t.Fatalf("expanded error = %v", err)
+	}
+	expandedData, _ := io.ReadAll(expandedResp.Body)
+	_ = expandedResp.Body.Close()
+	if strings.Contains(string(expandedData), "proxy-providers:") {
+		t.Fatalf("did not expect proxy-providers in expanded: %s", expandedData)
+	}
+	if !strings.Contains(string(expandedData), "SubNode") {
+		t.Fatalf("expected SubNode in expanded: %s", expandedData)
+	}
+}
+
