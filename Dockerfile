@@ -33,6 +33,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM alpine:3.22 AS runtime
 RUN addgroup -S clash && adduser -S clash -G clash && apk add --no-cache ca-certificates
+RUN mkdir -p /data && chown clash:clash /data
+ENV CLASH_NEXUS_DATA_DIR=/data
+VOLUME ["/data"]
 USER clash
 WORKDIR /app
 
