@@ -37,6 +37,6 @@ func (c *Converter) ConvertWithOptions(config map[string]interface{}, root *yaml
 		}
 		warnings = append(warnings, expandWarnings...)
 	}
-	data, err := yaml.Marshal(config)
+	data, err := converter.Marshal(config)
 	return data, warnings, err
 }
