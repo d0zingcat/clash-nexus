@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"clash-nexus/converter"
 )
 
 // Converter converts Clash YAML to Stash YAML format.
@@ -25,7 +27,7 @@ func (c *Converter) DefaultExtension() string { return ".yaml" }
 func (c *Converter) Convert(config map[string]interface{}, _ *yaml.Node) ([]byte, []string, error) {
 	warnings := []string{}
 	out := buildConfig(config, &warnings)
-	content, err := yaml.Marshal(out)
+	content, err := converter.Marshal(out)
 	return content, warnings, err
 }
 

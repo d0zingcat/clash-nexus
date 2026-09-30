@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"clash-nexus/converter"
 	"clash-nexus/converter/clash"
 )
 
@@ -26,7 +27,7 @@ func (c *Converter) DefaultExtension() string { return ".yaml" }
 func (c *Converter) Convert(config map[string]interface{}, root *yaml.Node) ([]byte, []string, error) {
 	warnings := []string{}
 	out := buildEgernConfig(config, root, &warnings)
-	content, err := yaml.Marshal(out)
+	content, err := converter.Marshal(out)
 	return content, warnings, err
 }
 
