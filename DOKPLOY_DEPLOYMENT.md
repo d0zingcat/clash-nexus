@@ -12,9 +12,6 @@ Configure these GitHub Actions repository secrets through a secure channel:
 - `DOKPLOY_DEPLOY_URL`: this application's own Dokploy deployment webhook.
 - `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`: Cloudflare Access
   service credentials for the Dokploy endpoint.
-- `DOKPLOY_BUILD_ARGS` and `DOKPLOY_BUILD_SECRETS`: optional existing
-  build inputs, if the application requires them. Keep secret values out of
-  the repository and workflow logs.
 
 The repository variable `DOKPLOY_AUTO_DEPLOY` defaults to disabled.
 First publish and verify the image, then switch the existing Dokploy
