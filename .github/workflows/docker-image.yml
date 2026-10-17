@@ -19,6 +19,10 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+concurrency:
+  group: publish-dokploy
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -46,14 +50,39 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=sha,prefix=sha-
+            type=sha,format=long,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and publish
         uses: docker/build-push-action@v6
         with:
           context: .
+          build-args: ${{ secrets.DOKPLOY_BUILD_ARGS }}
+          secrets: ${{ secrets.DOKPLOY_BUILD_SECRETS }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Notify Dokploy
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DOKPLOY_AUTO_DEPLOY == 'true' }}
+        env:
+          DOKPLOY_DEPLOY_URL: ${{ secrets.DOKPLOY_DEPLOY_URL }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          if [ -z "$DOKPLOY_DEPLOY_URL" ]; then
+            echo 'Required Dokploy webhook secret is missing.' >&2
+            exit 1
+          fi
+          status=$(curl --fail --silent --show-error --max-time 60 \
+            --output /dev/null --request POST "$DOKPLOY_DEPLOY_URL" \
+            --header "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            --header "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            --write-out '%{http_code}')
+          case "$status" in
+            2??) ;;
+            *) echo "Dokploy webhook returned HTTP $status." >&2; exit 1 ;;
+          esac
+          echo 'Dokploy accepted the deployment webhook; verify application health in Dokploy.'
