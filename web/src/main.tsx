@@ -25,8 +25,35 @@ type ConvertResponse = {
 
 type Mode = "yaml" | "file" | "url"
 type Source = "clash" | "loon"
+type BuildProfile = { id?: string; name: string; base: string; sources: {name:string;yaml:string;url?:string}[]; dnsAuthority: string; overlay: string; token?: string; version?: number }
+
+function ProfileManager() {
+  const blank: BuildProfile = {name:"",base:"",sources:[],dnsAuthority:"base",overlay:""}
+  const [profiles,setProfiles]=React.useState<BuildProfile[]>([])
+  const [current,setCurrent]=React.useState<BuildProfile>(blank)
+  const [preview,setPreview]=React.useState("")
+  const [message,setMessage]=React.useState("")
+  const refresh=()=>fetch("/api/profiles").then(r=>r.json()).then(d=>setProfiles(d.profiles||[])).catch(e=>setMessage(e.message))
+  React.useEffect(()=>{refresh()},[])
+  async function open(id:string){const r=await fetch(`/api/profiles/${id}`);const p=await r.json();if(!r.ok)throw Error(p.error?.message);setCurrent(p);setPreview("")}
+  async function save(){try{const r=await fetch(current.id?`/api/profiles/${current.id}`:"/api/profiles",{method:current.id?"PUT":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(current)});const p=await r.json();if(!r.ok)throw Error(p.error?.message);setCurrent(p);setMessage("配置已保存");refresh()}catch(e){setMessage(e instanceof Error?e.message:"保存失败")}}
+  async function previewConfig(){try{const r=await fetch("/api/profiles/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(current)});const t=await r.text();if(!r.ok){const d=JSON.parse(t);throw Error(d.error?.message)}setPreview(t);setMessage("预览已更新")}catch(e){setMessage(e instanceof Error?e.message:"预览失败")}}
+  async function remove(){if(!current.id)return;const r=await fetch(`/api/profiles/${current.id}`,{method:"DELETE"});if(!r.ok){setMessage("删除失败");return}setCurrent(blank);setPreview("");refresh();setMessage("配置已删除")}
+  const sub=current.id&&current.token?`${location.origin}/api/profiles/${current.id}/subscribe?token=${encodeURIComponent(current.token)}`:""
+  return <div className="mx-auto grid w-full max-w-6xl gap-5 px-5 py-6 lg:grid-cols-[280px_1fr]"><Card><CardHeader><CardTitle>配置组合</CardTitle><CardDescription>以 Base 为骨架，组合节点来源并生成 Clash 订阅。</CardDescription></CardHeader><CardContent className="grid gap-2"><Button variant="outline" onClick={()=>{setCurrent({...blank,sources:[]});setPreview("")}}>新建配置</Button>{profiles.map(p=><Button key={p.id} variant={current.id===p.id?"default":"outline"} className="justify-start" onClick={()=>open(p.id!)}>{p.name}</Button>)}</CardContent></Card>
+    <Card><CardHeader><CardTitle>{current.id?"编辑配置":"新建配置"}</CardTitle></CardHeader><CardContent className="grid gap-4"><div className="grid gap-2"><Label>名称</Label><Input value={current.name} onChange={e=>setCurrent({...current,name:e.target.value})}/></div>
+      <div className="grid gap-2"><Label>Base Clash YAML</Label><Textarea className="min-h-40 font-mono text-xs" value={current.base} onChange={e=>setCurrent({...current,base:e.target.value})} placeholder="保留路由、规则集与策略组"/></div>
+      <div className="flex items-center justify-between"><Label>机场 YAML 来源（按顺序合并）</Label><Button size="sm" variant="outline" onClick={()=>setCurrent({...current,sources:[...current.sources,{name:`来源 ${current.sources.length+1}`,yaml:""}]})}>添加来源</Button></div>
+      {current.sources.map((src,i)=><div key={i} className="grid gap-2 rounded-md border p-3"><div className="flex gap-2"><Input aria-label="来源名称" value={src.name} onChange={e=>{const sources=[...current.sources];sources[i]={...src,name:e.target.value};setCurrent({...current,sources})}}/><Button variant="outline" disabled={i===0} onClick={()=>{const sources=[...current.sources];[sources[i-1],sources[i]]=[sources[i],sources[i-1]];setCurrent({...current,sources})}}>上移</Button><Button variant="outline" disabled={i===current.sources.length-1} onClick={()=>{const sources=[...current.sources];[sources[i+1],sources[i]]=[sources[i],sources[i+1]];setCurrent({...current,sources})}}>下移</Button><Button variant="ghost" onClick={()=>setCurrent({...current,sources:current.sources.filter((_,j)=>i!==j)})}>移除</Button></div><Textarea className="min-h-28 font-mono text-xs" placeholder="粘贴完整 Clash YAML 或仅含 proxies 的节点 YAML" value={src.yaml} onChange={e=>{const sources=[...current.sources];sources[i]={...src,yaml:e.target.value};setCurrent({...current,sources})}}/><Input placeholder="可选远程 YAML URL（填写后优先拉取）" value={src.url||""} onChange={e=>{const sources=[...current.sources];sources[i]={...src,url:e.target.value};setCurrent({...current,sources})}}/></div>)}
+      <div className="grid gap-2"><Label>DNS 上游权威来源</Label><select className="h-10 rounded-md border bg-background px-3 text-sm" value={current.dnsAuthority} onChange={e=>setCurrent({...current,dnsAuthority:e.target.value})}><option value="base">Base</option>{current.sources.map(s=><option key={s.name} value={s.name}>{s.name}</option>)}</select></div>
+      <div className="grid gap-2"><Label>设备覆盖 YAML</Label><Textarea className="min-h-36 font-mono text-xs" placeholder={'普通映射递归覆盖；列表通过 append/remove/replace 指令操作'} value={current.overlay} onChange={e=>setCurrent({...current,overlay:e.target.value})}/></div>
+      <div className="flex flex-wrap gap-2"><Button onClick={save}>保存配置</Button><Button variant="outline" onClick={previewConfig}>预览合成 YAML</Button>{current.id&&<Button variant="destructive" onClick={remove}>删除</Button>}{message&&<span className="self-center text-sm text-muted-foreground">{message}</span>}</div>
+      {sub&&<div className="grid gap-2"><Label>只读订阅地址</Label><div className="flex gap-2"><Input readOnly value={sub}/><Button variant="outline" onClick={()=>navigator.clipboard.writeText(sub).then(()=>setMessage("订阅地址已复制"))}>复制</Button></div></div>}{preview&&<div className="grid gap-2"><Label>合成结果</Label><Textarea readOnly className="min-h-64 font-mono text-xs" value={preview}/></div>}
+    </CardContent></Card></div>
+}
 
 function App() {
+  const [page,setPage]=React.useState<"convert"|"profiles">("convert")
   const [targets, setTargets] = React.useState<Target[]>([])
   const [target, setTarget] = React.useState("")
   const [source, setSource] = React.useState<Source>("clash")
@@ -167,6 +194,9 @@ function App() {
         </div>
         <div className="rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground">127.0.0.1 only</div>
       </header>
+
+      <nav className="flex gap-2"><Button variant={page==="convert"?"default":"outline"} onClick={()=>setPage("convert")}>格式转换</Button><Button variant={page==="profiles"?"default":"outline"} onClick={()=>setPage("profiles")}>配置组合</Button></nav>
+      {page==="profiles" ? <ProfileManager/> : <>
 
       <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
         <Card className="overflow-hidden">
@@ -342,6 +372,7 @@ function App() {
           </CardContent>
         </Card>
       </section>
+      </>}
     </main>
   )
 }

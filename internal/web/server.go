@@ -18,6 +18,7 @@ import (
 	"clash-nexus/converter"
 	"clash-nexus/converter/clash"
 	"clash-nexus/internal/app"
+	"clash-nexus/internal/profile"
 )
 
 const (
@@ -34,6 +35,8 @@ type Server struct {
 	client         *http.Client
 	subscribeCache map[string]cachedSubscription
 	cacheMu        sync.Mutex
+	profiles       *profile.Store
+	profileErr     error
 }
 
 type cachedSubscription struct {
@@ -58,10 +61,13 @@ func NewServer(service *app.Service) *Server {
 	if service != nil {
 		service.SetClashFetcher(clash.NewDefaultFetcher(client, ""))
 	}
+	store, storeErr := profile.NewStore()
 	return &Server{
 		service:        service,
 		subscribeCache: map[string]cachedSubscription{},
 		client:         client,
+		profiles:       store,
+		profileErr:     storeErr,
 	}
 }
 
@@ -70,6 +76,13 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.index)
 	mux.HandleFunc("GET /api/targets", s.targets)
+	mux.HandleFunc("GET /api/profiles", s.profileList)
+	mux.HandleFunc("POST /api/profiles", s.profileSave)
+	mux.HandleFunc("GET /api/profiles/{id}", s.profileGet)
+	mux.HandleFunc("PUT /api/profiles/{id}", s.profileSave)
+	mux.HandleFunc("DELETE /api/profiles/{id}", s.profileDelete)
+	mux.HandleFunc("POST /api/profiles/preview", s.profilePreview)
+	mux.HandleFunc("GET /api/profiles/{id}/subscribe", s.profileSubscribe)
 	mux.HandleFunc("POST /api/convert", s.convertJSON)
 	mux.HandleFunc("POST /api/convert/file", s.convertFile)
 	mux.HandleFunc("GET /api/subscribe", s.subscribe)
@@ -83,6 +96,133 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) targets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"targets": s.service.Targets()})
+}
+
+func (s *Server) profileList(w http.ResponseWriter, r *http.Request) {
+	if s.profileErr != nil {
+		writeError(w, 500, "storage_error", "profile storage is unavailable")
+		return
+	}
+	items, err := s.profiles.List()
+	if err != nil {
+		writeError(w, 500, "storage_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]interface{}{"profiles": items})
+}
+func (s *Server) profileGet(w http.ResponseWriter, r *http.Request) {
+	if s.profileErr != nil {
+		writeError(w, 500, "storage_error", "profile storage is unavailable")
+		return
+	}
+	p, e := s.profiles.Get(r.PathValue("id"))
+	if e != nil {
+		writeError(w, 404, "not_found", "profile not found")
+		return
+	}
+	writeJSON(w, 200, p)
+}
+func (s *Server) profileSave(w http.ResponseWriter, r *http.Request) {
+	if s.profileErr != nil {
+		writeError(w, 500, "storage_error", "profile storage is unavailable")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxInputBytes)
+	defer r.Body.Close()
+	var p profile.Profile
+	if json.NewDecoder(r.Body).Decode(&p) != nil {
+		writeError(w, 400, "bad_request", "request body must be a valid profile JSON")
+		return
+	}
+	if r.Method == http.MethodPut {
+		p.ID = r.PathValue("id")
+	}
+	p, err := s.materializeProfile(p)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	p, e := s.profiles.Save(p)
+	if e != nil {
+		writeError(w, 400, "invalid_profile", e.Error())
+		return
+	}
+	writeJSON(w, 200, p)
+}
+func (s *Server) profileDelete(w http.ResponseWriter, r *http.Request) {
+	if s.profileErr != nil {
+		writeError(w, 500, "storage_error", "profile storage is unavailable")
+		return
+	}
+	if e := s.profiles.Delete(r.PathValue("id")); e != nil {
+		writeError(w, 404, "not_found", "profile not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) materializeProfile(p profile.Profile) (profile.Profile, error) {
+	for i := range p.Sources {
+		src := &p.Sources[i]
+		if strings.TrimSpace(src.URL) != "" {
+			b, e := s.fetchRemote(src.URL)
+			if e != nil {
+				return p, fmt.Errorf("source %q: %w", src.Name, e)
+			}
+			src.YAML = string(b)
+		}
+	}
+	return p, nil
+}
+func (s *Server) profilePreview(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxInputBytes)
+	defer r.Body.Close()
+	var p profile.Profile
+	if json.NewDecoder(r.Body).Decode(&p) != nil {
+		writeError(w, 400, "bad_request", "request body must be profile JSON")
+		return
+	}
+	p, e := s.materializeProfile(p)
+	if e != nil {
+		writeAppError(w, e)
+		return
+	}
+	b, e := profile.Compose(p)
+	if e != nil {
+		writeError(w, 400, "invalid_profile", e.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-yaml; charset=utf-8")
+	_, _ = w.Write(b)
+}
+func (s *Server) profileSubscribe(w http.ResponseWriter, r *http.Request) {
+	if s.profileErr != nil {
+		writeError(w, 500, "storage_error", "profile storage is unavailable")
+		return
+	}
+	p, e := s.profiles.Get(r.PathValue("id"))
+	if e != nil {
+		writeError(w, 404, "not_found", "profile not found")
+		return
+	}
+	if r.URL.Query().Get("token") == "" || r.URL.Query().Get("token") != p.Token {
+		writeError(w, 404, "not_found", "subscription not found")
+		return
+	}
+	p, e = s.materializeProfile(p)
+	if e != nil {
+		writeAppError(w, e)
+		return
+	}
+	b, e := profile.Compose(p)
+	if e != nil {
+		writeError(w, 500, "invalid_profile", "saved profile can no longer be composed: "+e.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-yaml; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("ETag", fmt.Sprintf("\"%d\"", p.Version))
+	w.Header().Set("Content-Disposition", `inline; filename="`+p.ID+`.yaml"`)
+	_, _ = w.Write(b)
 }
 
 type convertRequest struct {

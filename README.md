@@ -91,6 +91,24 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 
 远程 URL 第一版只允许 `http` / `https`，请求超时为 10 秒，输入大小限制为 5 MiB。
 
+### Clash 配置组合
+
+网页的“配置组合”页可创建 Clash YAML 订阅：Base 保留规则、策略组和全局设置；有序来源只导入 `proxies`、`proxy-providers` 与 `dns.nameserver-policy`。来源可粘贴 YAML 或填写远程 YAML URL。DNS 上游整体选择 Base 或一个来源，设备覆盖在合成后应用。节点订阅仅支持 Clash YAML，不解析 Base64 或 URI 节点格式。
+
+覆盖 YAML 支持递归合并映射、用 `null` 删除映射键，以及对列表使用指令。例如在已存在的 `Main` 策略组中移除旧节点并追加一个节点：
+
+```yaml
+proxy-groups:
+  - name: Main
+    proxies:
+      remove: [旧节点]
+      append: [新节点]
+```
+
+同一路径可以同时使用 `remove` 和 `append`，会先删除再追加；`replace` 不能与二者同时使用。追加项按完整值去重。
+
+配置管理 API：`GET/POST /api/profiles`、`GET/PUT/DELETE /api/profiles/{id}`，预览使用 `POST /api/profiles/preview`。读取配置会返回只读订阅令牌；订阅地址为 `GET /api/profiles/{id}/subscribe?token=...`。配置更新会递增版本，订阅响应不缓存。数据默认写入 `$XDG_DATA_HOME/clash-nexus`（未设置时为 `~/.local/share/clash-nexus`），可用 `CLASH_NEXUS_DATA_DIR` 更改；Docker 镜像使用 `/data` 卷。
+
 ## 支持的转换目标
 
 | 目标 | 格式 | 默认输出路径 |
