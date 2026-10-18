@@ -171,10 +171,12 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 | `tun` | `tun` inbound |
 | `proxies` | `outbounds` |
 | `proxies` (wireguard) | `endpoints` |
+| `proxy-providers` | 自动抓取并展开到 `outbounds` |
 | `proxy-groups` (select / url-test) | `selector` / `urltest` outbound |
 | `proxy-groups` (fallback / load-balance) | 映射为 `urltest` / `selector` 并输出 warning |
 | `rules` | `route.rules`，`MATCH` 写入 `route.final` |
 | `rule-providers`（`.srs` / `.json`） | `route.rule_set`（remote） |
+| `rule-providers`（Clash YAML / Surge `.list`） | 自动抓取并转换为 `route.rule_set`（inline） |
 | `GEOIP` / `GEOSITE` | 自动生成 SagerNet `sing-geoip` / `sing-geosite` 远程 rule-set |
 | `dns.nameserver` / `fallback` | `dns.servers`（udp/tcp/tls/https/quic/h3） |
 | `dns.nameserver-policy` | `dns.rules` |
@@ -184,8 +186,9 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 
 ### sing-box 注意事项
 
-- `proxy-providers` 没有 sing-box 原生对应。默认会输出 warning 并跳过仅使用 `use` 的策略组；使用 `-expand-proxy-providers` 可先把节点展开再转换。
-- Clash 的 `rule-providers` 如果是 YAML/Surge `.list` 格式，sing-box 不能直接加载，会输出 warning 并跳过对应 `RULE-SET` 规则。请改用 sing-box `.srs` / `.json` 规则集。
+- `proxy-providers` 没有 sing-box 原生对应，转换时会自动抓取并展开为静态 `outbounds`；抓取失败会输出 warning，相关策略组回退到 `DIRECT`。`-expand-proxy-providers` 对 sing-box 已不再必需，但仍兼容。
+- Clash YAML / Surge `.list` 格式的 `rule-providers` 会在转换时自动抓取，并转换为 sing-box `inline` rule-set；`.srs` / `.json` 则保留为远程 rule-set。抓取失败、格式不支持或包含无法映射的规则时会输出 warning，并跳过对应规则。
+- 因此 sing-box 目标在存在 `proxy-providers` / 非 `.srs`/`.json` 的 `rule-providers` 时需要联网；纯本地配置不受影响。
 - `GEOIP,LAN` 映射为 `ip_is_private`；其他 `GEOIP`/`GEOSITE` 会生成远程规则集，首次启动需要联网下载。
 - `sniffer`、`experimental` 等 Clash 专属段不会静默丢弃，会以 warning 返回。
 - `wireguard` 节点输出为顶层 `endpoints`，不再使用已移除的 WireGuard outbound。

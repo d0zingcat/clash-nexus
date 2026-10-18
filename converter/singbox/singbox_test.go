@@ -3,6 +3,7 @@ package singbox
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -393,13 +394,13 @@ func TestConvertWarnsForUnsupportedProviders(t *testing.T) {
 			"MATCH,DIRECT",
 		},
 	}
-	_, warnings, err := New().Convert(input, nil)
+	_, warnings, err := NewWithFetcher(&failingFetcher{}).Convert(input, nil)
 	if err != nil {
 		t.Fatalf("Convert() error = %v", err)
 	}
 	for _, want := range []string{
-		`proxy group "ProviderGroup": proxy-provider "provider" is not supported by sing-box`,
-		`proxy-providers are not natively supported by sing-box`,
+		`failed to fetch proxy provider "provider"`,
+		`proxy group "ProviderGroup" has no proxies after expanding providers`,
 		`skipping rule provider "ClashSet"`,
 		`skipping rule RULE-SET,ClashSet`,
 	} {
@@ -408,7 +409,7 @@ func TestConvertWarnsForUnsupportedProviders(t *testing.T) {
 		}
 	}
 
-	_, second, err := New().Convert(input, nil)
+	_, second, err := NewWithFetcher(&failingFetcher{}).Convert(input, nil)
 	if err != nil {
 		t.Fatalf("second Convert() error = %v", err)
 	}
@@ -425,7 +426,108 @@ func (m *mockFetcher) Fetch(ctx context.Context, provider map[string]interface{}
 	return m.data, nil
 }
 
-func TestConvertExpandsProxyProviders(t *testing.T) {
+type failingFetcher struct{}
+
+func (f *failingFetcher) Fetch(ctx context.Context, provider map[string]interface{}, basePath string) ([]byte, error) {
+	return nil, fmt.Errorf("fetch failed")
+}
+
+type ruleFetcher map[string][]byte
+
+func (f ruleFetcher) Fetch(ctx context.Context, provider map[string]interface{}, basePath string) ([]byte, error) {
+	url := fmt.Sprintf("%v", provider["url"])
+	data, ok := f[url]
+	if !ok {
+		return nil, fmt.Errorf("unexpected url %s", url)
+	}
+	return data, nil
+}
+
+func TestConvertInlineRuleProviders(t *testing.T) {
+	clashURL := "https://example.com/rules.yaml"
+	listURL := "https://example.com/rules.list"
+	input := map[string]interface{}{
+		"proxies": []interface{}{
+			map[string]interface{}{"name": "ss-node", "type": "ss", "server": "ss.example.com", "port": 8388, "cipher": "aes-128-gcm", "password": "pass"},
+		},
+		"proxy-groups": []interface{}{
+			map[string]interface{}{"name": "Proxy", "type": "select", "proxies": []interface{}{"ss-node"}},
+		},
+		"rule-providers": map[string]interface{}{
+			"ClashSet": map[string]interface{}{
+				"type": "http", "behavior": "classical", "url": clashURL, "format": "yaml",
+			},
+			"ListSet": map[string]interface{}{
+				"type": "http", "behavior": "classical", "url": listURL, "format": "text",
+			},
+		},
+		"rules": []interface{}{
+			"RULE-SET,ClashSet,Proxy",
+			"RULE-SET,ListSet,DIRECT",
+			"MATCH,Proxy",
+		},
+	}
+	fetcher := ruleFetcher{
+		clashURL: []byte(`
+payload:
+  - DOMAIN-SUFFIX,example.com
+  - DOMAIN,exact.example.com
+  - IP-CIDR,10.0.0.0/8,no-resolve
+  - IP-CIDR6,2001:db8::/32
+  - PROCESS-NAME,curl
+`),
+		listURL: []byte(`
+# Surge-style list
+DOMAIN-SUFFIX,example.net
+IP-CIDR,192.168.0.0/16,no-resolve
+`),
+	}
+	out, warnings, err := NewWithFetcher(fetcher).Convert(input, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	config := decodeJSON(t, out)
+	route := config["route"].(map[string]interface{})
+	ruleSets := route["rule_set"].([]interface{})
+	sets := map[string]map[string]interface{}{}
+	for _, value := range ruleSets {
+		def := value.(map[string]interface{})
+		sets[def["tag"].(string)] = def
+	}
+	clashSet := sets["ClashSet"]
+	if clashSet["type"] != "inline" {
+		t.Fatalf("ClashSet = %#v, want inline", clashSet)
+	}
+	header := clashSet["rules"].([]interface{})
+	var suffixes, ipCIDRs, processNames []string
+	for _, raw := range header {
+		rule := raw.(map[string]interface{})
+		suffixes = append(suffixes, stringSlice(rule["domain_suffix"])...)
+		ipCIDRs = append(ipCIDRs, stringSlice(rule["ip_cidr"])...)
+		processNames = append(processNames, stringSlice(rule["process_name"])...)
+	}
+	if !reflect.DeepEqual(suffixes, []string{"example.com"}) {
+		t.Fatalf("domain_suffix = %v", suffixes)
+	}
+	if !reflect.DeepEqual(ipCIDRs, []string{"10.0.0.0/8", "2001:db8::/32"}) {
+		t.Fatalf("ip_cidr = %v", ipCIDRs)
+	}
+	if !reflect.DeepEqual(processNames, []string{"curl"}) {
+		t.Fatalf("process_name = %v", processNames)
+	}
+	listSet := sets["ListSet"]
+	if listSet["type"] != "inline" {
+		t.Fatalf("ListSet = %#v, want inline", listSet)
+	}
+	rules := route["rules"].([]interface{})
+	assertRuleField(t, rules, "rule_set", "ClashSet", "Proxy")
+	assertRuleField(t, rules, "rule_set", "ListSet", "DIRECT")
+}
+
+func TestConvertExpandsProxyProvidersByDefault(t *testing.T) {
 	input := map[string]interface{}{
 		"proxy-providers": map[string]interface{}{
 			"provider": map[string]interface{}{"type": "http", "url": "https://example.com/sub.yaml"},
@@ -443,7 +545,7 @@ proxies:
     cipher: aes-128-gcm
     password: pass
 `)}
-	out, warnings, err := NewWithFetcher(fetcher).ConvertWithOptions(input, nil, converter.Options{ExpandProxyProviders: true})
+	out, warnings, err := NewWithFetcher(fetcher).ConvertWithOptions(input, nil, converter.Options{})
 	if err != nil {
 		t.Fatalf("ConvertWithOptions() error = %v", err)
 	}

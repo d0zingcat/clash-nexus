@@ -56,9 +56,17 @@ func (c *Converter) Convert(config map[string]interface{}, root *yaml.Node) ([]b
 // slice, optionally expanding proxy-providers first.
 func (c *Converter) ConvertWithOptions(config map[string]interface{}, root *yaml.Node, options converter.Options) ([]byte, []string, error) {
 	warnings := []string{}
-	if options.ExpandProxyProviders && config["proxy-providers"] != nil {
-		expandWarnings, err := clash.ExpandProxyProviders(config, clash.ExpandOptions{
-			Fetcher:  c.Fetcher,
+	fetcher := c.Fetcher
+	if fetcher == nil {
+		fetcher = clash.NewDefaultFetcher(nil, options.BasePath)
+	}
+	working := cloneStringMap(config)
+	// sing-box has no native proxy-provider support, so providers are always
+	// inlined. The -expand-proxy-providers flag remains accepted for
+	// compatibility, but is no longer required for this target.
+	if working["proxy-providers"] != nil {
+		expandWarnings, err := clash.ExpandProxyProviders(working, clash.ExpandOptions{
+			Fetcher:  fetcher,
 			BasePath: options.BasePath,
 			RootNode: root,
 		})
@@ -68,7 +76,7 @@ func (c *Converter) ConvertWithOptions(config map[string]interface{}, root *yaml
 		warnings = append(warnings, expandWarnings...)
 	}
 
-	b := newBuilder(config, root)
+	b := newBuilder(working, root, fetcher, options.BasePath)
 	b.build()
 	warnings = append(warnings, b.warnings...)
 	sort.Strings(warnings)
@@ -79,6 +87,34 @@ func (c *Converter) ConvertWithOptions(config map[string]interface{}, root *yaml
 		return nil, warnings, err
 	}
 	return content, warnings, nil
+}
+
+func cloneStringMap(input map[string]interface{}) map[string]interface{} {
+	if input == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		out[key] = cloneValue(value)
+	}
+	return out
+}
+
+func cloneValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		return cloneStringMap(typed)
+	case []interface{}:
+		out := make([]interface{}, len(typed))
+		for i, item := range typed {
+			out[i] = cloneValue(item)
+		}
+		return out
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
 }
 
 func marshalJSON(v interface{}) ([]byte, error) {
@@ -95,8 +131,10 @@ func marshalJSON(v interface{}) ([]byte, error) {
 // builder accumulates the sing-box documents and the state needed to resolve
 // references between them (outbound tags, rule-set tags, DNS tags, ...).
 type builder struct {
-	config map[string]interface{}
-	root   *yaml.Node
+	config   map[string]interface{}
+	root     *yaml.Node
+	fetcher  clash.ProviderFetcher
+	basePath string
 
 	output   map[string]interface{}
 	warnings []string
@@ -121,10 +159,12 @@ type builder struct {
 	globalFingerprint string
 }
 
-func newBuilder(config map[string]interface{}, root *yaml.Node) *builder {
+func newBuilder(config map[string]interface{}, root *yaml.Node, fetcher clash.ProviderFetcher, basePath string) *builder {
 	return &builder{
 		config:       config,
 		root:         root,
+		fetcher:      fetcher,
+		basePath:     basePath,
 		output:       map[string]interface{}{},
 		outboundTags: map[string]bool{directTag: true, rejectTag: true},
 		ruleSetTags:  map[string]bool{},
@@ -478,7 +518,18 @@ func (b *builder) collectRuleProviders() {
 		path := strings.TrimSpace(clash.MapGetStr(cfg, "path", ""))
 		format, ok := ruleProviderFormat(rawURL, path, clash.MapGetStr(cfg, "format", ""))
 		if !ok {
-			b.warnf("skipping rule provider %q: sing-box cannot load Clash rule-set format; RULE-SET rules using it will be skipped", name)
+			rules, err := b.inlineRuleProvider(name, cfg)
+			if err != nil {
+				b.warnf("skipping rule provider %q: %v; RULE-SET rules using it will be skipped", name, err)
+				continue
+			}
+			tag := b.uniqueRuleSetTag(name)
+			b.ruleProvider[name] = tag
+			b.addRuleSet(map[string]interface{}{
+				"type":  "inline",
+				"tag":   tag,
+				"rules": rules,
+			})
 			continue
 		}
 		tag := b.uniqueRuleSetTag(name)
@@ -663,6 +714,34 @@ func (b *builder) convertRule(ruleType string, fields []string) map[string]inter
 	}
 	outbound := b.resolvePolicy(policy, "rule")
 
+	if ruleType == "AND" || ruleType == "OR" || ruleType == "NOT" {
+		logical := b.convertLogicalRule(ruleType, match, fields)
+		if logical == nil {
+			return nil
+		}
+		logical["outbound"] = outbound
+		return logical
+	}
+
+	rule := b.convertRuleMatcher(ruleType, fields)
+	if rule == nil {
+		return nil
+	}
+	rule["outbound"] = outbound
+	return rule
+}
+
+// convertRuleMatcher converts a Clash rule into the matching part of a
+// sing-box rule. It does not attach an outbound, so it can also be used for
+// headless inline rule-sets.
+func (b *builder) convertRuleMatcher(ruleType string, fields []string) map[string]interface{} {
+	ruleType = strings.ToUpper(strings.TrimSpace(ruleType))
+	if len(fields) < 1 {
+		b.warnf("skipping rule %s: missing match value", ruleType)
+		return nil
+	}
+	match := strings.TrimSpace(fields[0])
+
 	rule := map[string]interface{}{}
 	switch ruleType {
 	case "DOMAIN":
@@ -728,17 +807,10 @@ func (b *builder) convertRule(ruleType string, fields []string) map[string]inter
 	case "USER-AGENT":
 		b.warnf("skipping rule %s,%s: sing-box has no user-agent matcher", ruleType, match)
 		return nil
-	case "AND", "OR", "NOT":
-		logical := b.convertLogicalRule(ruleType, match, fields)
-		if logical == nil {
-			return nil
-		}
-		rule = logical
 	default:
 		b.warnf("skipping unsupported rule type %q (rule: %s)", ruleType, match)
 		return nil
 	}
-	rule["outbound"] = outbound
 	return rule
 }
 
@@ -751,7 +823,6 @@ func (b *builder) convertLogicalRule(ruleType, match string, fields []string) ma
 		return nil
 	}
 	expression := match
-	policy := fields[len(fields)-1]
 	subRules := splitLogicalOperands(expression)
 	if len(subRules) == 0 {
 		b.warnf("skipping malformed logical rule %s,%s", ruleType, match)
@@ -775,10 +846,9 @@ func (b *builder) convertLogicalRule(ruleType, match string, fields []string) ma
 		converted = append(converted, child)
 	}
 	return map[string]interface{}{
-		"type":     "logical",
-		"mode":     strings.ToLower(ruleType),
-		"rules":    converted,
-		"outbound": b.resolvePolicy(policy, "rule"),
+		"type":  "logical",
+		"mode":  strings.ToLower(ruleType),
+		"rules": converted,
 	}
 }
 
