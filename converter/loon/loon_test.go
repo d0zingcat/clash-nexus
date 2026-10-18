@@ -225,23 +225,59 @@ func TestConvertWireGuard(t *testing.T) {
 
 func TestConvertAnyTLS(t *testing.T) {
 	got := convertAnyTLS(map[string]interface{}{
-		"name":             "any",
-		"server":           "any.example.com",
-		"port":             443,
-		"password":         "secret",
-		"servername":       "sni.example.com",
-		"skip-cert-verify": true,
+		"name":               "any",
+		"server":             "any.example.com",
+		"port":               443,
+		"password":           "secret",
+		"servername":         "sni.example.com",
+		"skip-cert-verify":   true,
+		"client-fingerprint": "chrome",
+		"alpn":               []interface{}{"h2", "http/1.1"},
 	})
 
 	for _, want := range []string{
-		"any = AnyTLS,any.example.com,443",
-		`password="secret"`,
+		`any = AnyTLS,any.example.com,443,"secret"`,
 		"sni=sni.example.com",
 		"skip-cert-verify=true",
+		"tls-profile=chrome",
+		`alpn="h2,http/1.1"`,
+		"udp=true",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("convertAnyTLS() missing %q: %s", want, got)
 		}
+	}
+
+	// Loon takes the password as a positional argument. A key=value form makes
+	// Loon pass the literal `password="..."` token to the server, which drops
+	// the session and every request times out.
+	for _, unwanted := range []string{"password=", "client-fingerprint="} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("convertAnyTLS() must not emit %q: %s", unwanted, got)
+		}
+	}
+}
+
+func TestConvertAnyTLSRealityAndFingerprintFallback(t *testing.T) {
+	got := convertAnyTLS(map[string]interface{}{
+		"name":               "any",
+		"server":             "any.example.com",
+		"port":               443,
+		"password":           "secret",
+		"client-fingerprint": "firefox",
+		"reality-opts": map[string]interface{}{
+			"public-key": "pub",
+			"short-id":   "abcd",
+		},
+	})
+
+	for _, want := range []string{`public-key="pub"`, "short-id=abcd", "udp=true"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("convertAnyTLS() missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "tls-profile=") {
+		t.Fatalf("convertAnyTLS() should drop unsupported fingerprints: %s", got)
 	}
 }
 

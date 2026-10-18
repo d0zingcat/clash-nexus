@@ -372,10 +372,10 @@ func convertVless(p map[string]interface{}) string {
 		}
 	}
 
-	if fp := clash.MapGetStr(p, "client-fingerprint", ""); fp != "" {
-		parts = append(parts, "fingerprint="+fp)
+	if tlsProfile := loonTLSProfile(clash.MapGetStr(p, "client-fingerprint", "")); tlsProfile != "" {
+		parts = append(parts, "tls-profile="+tlsProfile)
 	} else if hasReality {
-		parts = append(parts, "fingerprint=chrome")
+		parts = append(parts, "tls-profile=chrome")
 	}
 
 	if transport == "ws" {
@@ -555,12 +555,18 @@ func convertWireGuard(p map[string]interface{}) string {
 	return strings.Join(parts, ",")
 }
 
+// convertAnyTLS renders a Loon AnyTLS node. Loon documents the credential as
+// the protocol's required positional argument (AnyTLS,server,port,"password").
+// Emitting `password="..."` instead makes Loon treat the whole token, quotes
+// included, as the password: the server then silently drops every session
+// (log shows `Socket closed by remote peer` right after `[AnyTLS][auth]`), so
+// every connection ends in a timeout.
 func convertAnyTLS(p map[string]interface{}) string {
 	name := clash.MapGetStr(p, "name", "")
 	server := clash.MapGetStr(p, "server", "")
 	port := clash.MapGetInt(p, "port", 0)
 	password := clash.MapGetStr(p, "password", "")
-	parts := []string{fmt.Sprintf(`%s = AnyTLS,%s,%d,password="%s"`, name, server, port, password)}
+	parts := []string{fmt.Sprintf(`%s = AnyTLS,%s,%d,"%s"`, name, server, port, password)}
 
 	if sni := firstNonEmpty(clash.MapGetStr(p, "servername", ""), clash.MapGetStr(p, "sni", "")); sni != "" {
 		parts = append(parts, "sni="+sni)
@@ -568,13 +574,40 @@ func convertAnyTLS(p map[string]interface{}) string {
 	if clash.MapGetBool(p, "skip-cert-verify", false) {
 		parts = append(parts, "skip-cert-verify=true")
 	}
-	if fp := clash.MapGetStr(p, "client-fingerprint", ""); fp != "" {
-		parts = append(parts, "client-fingerprint="+fp)
+	if tlsProfile := loonTLSProfile(clash.MapGetStr(p, "client-fingerprint", "")); tlsProfile != "" {
+		parts = append(parts, "tls-profile="+tlsProfile)
 	}
 	if alpn := strings.Join(clash.ToStringSlice(p["alpn"]), ","); alpn != "" {
-		parts = append(parts, "alpn="+alpn)
+		parts = append(parts, fmt.Sprintf(`alpn="%s"`, alpn))
 	}
+	if reality, ok := clash.MapGet[map[string]interface{}](p, "reality-opts"); ok && reality != nil {
+		if pubKey := clash.MapGetStr(reality, "public-key", ""); pubKey != "" {
+			parts = append(parts, fmt.Sprintf(`public-key="%s"`, pubKey))
+		}
+		if shortID := clash.MapGetStr(reality, "short-id", ""); shortID != "" {
+			parts = append(parts, "short-id="+shortID)
+		}
+	}
+	parts = append(parts, "udp="+clash.BoolStr(clash.MapGetBool(p, "udp", true)))
 	return strings.Join(parts, ",")
+}
+
+// loonTLSProfile maps a Clash client-fingerprint value onto a Loon tls-profile
+// value. Loon only documents global, default, safari-ios18, safari-ios-26,
+// chrome and chrome147; other Clash values are dropped so Loon falls back to
+// its own default ClientHello profile instead of receiving an unknown key.
+func loonTLSProfile(fingerprint string) string {
+	switch strings.ToLower(strings.TrimSpace(fingerprint)) {
+	case "chrome", "chrome147":
+		return "chrome"
+	case "safari-ios18", "ios":
+		return "safari-ios18"
+	case "safari-ios-26":
+		return "safari-ios-26"
+	case "default", "global":
+		return strings.ToLower(strings.TrimSpace(fingerprint))
+	}
+	return ""
 }
 
 func appendHTTPTransportOpts(parts *[]string, p map[string]interface{}) {

@@ -14,6 +14,9 @@ clash-nexus
 node_modules/
 .pnpm-store/
 
+# Git worktrees (develop in a worktree under .worktree/, never in the main checkout)
+/.worktree/
+
 # Local config / temp files
 /all-in-one.yaml
 /tmp/
