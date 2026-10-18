@@ -953,6 +953,12 @@ func buildEgernRules(
 			continue
 		}
 
+		ruleType := strings.ToUpper(strings.TrimSpace(strings.SplitN(ruleStr, ",", 2)[0]))
+		if ruleType == "AND" || ruleType == "OR" || ruleType == "NOT" {
+			addWarning(warnings, "dropping unsupported rule %q: Egern does not support logical rules (AND/OR/NOT)", ruleStr)
+			continue
+		}
+
 		parts := make([]string, 0)
 		for _, pt := range strings.Split(ruleStr, ",") {
 			parts = append(parts, strings.TrimSpace(pt))
@@ -960,8 +966,6 @@ func buildEgernRules(
 		if len(parts) < 2 {
 			continue
 		}
-
-		ruleType := strings.ToUpper(parts[0])
 		match := parts[1]
 		policy := ""
 		if len(parts) > 2 {

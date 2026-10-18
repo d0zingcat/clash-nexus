@@ -91,6 +91,25 @@ func TestConvertHostsAcceptsSystemAndIP(t *testing.T) {
 	}
 }
 
+func TestConvertRulesMapsNestedLogicTokens(t *testing.T) {
+	ruleText, _ := convertRulesAndRemoteRules([]interface{}{
+		"AND,((NETWORK,UDP),(DST-PORT,443)),REJECT",
+		"NOT,((NETWORK,TCP)),DIRECT",
+	}, nil, nil)
+
+	for _, want := range []string{
+		"AND,((PROTOCOL,UDP),(DEST-PORT,443)),REJECT",
+		"NOT,((PROTOCOL,TCP)),DIRECT",
+	} {
+		if !strings.Contains(ruleText, want) {
+			t.Fatalf("logic rule output missing %q:\n%s", want, ruleText)
+		}
+	}
+	if strings.Contains(ruleText, "NETWORK") || strings.Contains(ruleText, "DST-PORT") {
+		t.Fatalf("logic rule still contains Clash-only tokens:\n%s", ruleText)
+	}
+}
+
 func TestConvertRulesKeepsLogicRulesAndMapsNetwork(t *testing.T) {
 	ruleText, _ := convertRulesAndRemoteRules([]interface{}{
 		"AND,((DOMAIN-SUFFIX,example.com),(PROTOCOL,HTTP)),Proxy",

@@ -900,6 +900,20 @@ func convertProxyGroups(groups []map[string]interface{}, chainMap map[string]str
 
 var reYamlSuffix = regexp.MustCompile(`\.yaml$`)
 
+var (
+	reLogicNetwork = regexp.MustCompile(`([(,])\s*NETWORK\s*,`)
+	reLogicDstPort = regexp.MustCompile(`([(,])\s*DST-PORT\s*,`)
+)
+
+// convertLogicRule rewrites Clash sub-rule types used inside Loon AND/OR/NOT
+// rules to their Loon equivalents: NETWORK becomes PROTOCOL and DST-PORT
+// becomes DEST-PORT.
+func convertLogicRule(rule string) string {
+	rule = reLogicNetwork.ReplaceAllString(rule, "${1}PROTOCOL,")
+	rule = reLogicDstPort.ReplaceAllString(rule, "${1}DEST-PORT,")
+	return rule
+}
+
 func convertRuleProviderURL(url string) string {
 	if strings.Contains(url, "blackmatrix7") && strings.Contains(url, "rule/Clash/") {
 		url = strings.ReplaceAll(url, "rule/Clash/", "rule/Loon/")
@@ -1003,6 +1017,9 @@ func convertRulesAndRemoteRules(rules []interface{}, ruleProviders map[string]in
 
 		case "NETWORK":
 			localLines = append(localLines, "PROTOCOL,"+strings.Join(parts[1:], ","))
+
+		case "AND", "OR", "NOT":
+			localLines = append(localLines, convertLogicRule(ruleStr))
 
 		default:
 			if unsupportedRuleTypes[ruleType] {

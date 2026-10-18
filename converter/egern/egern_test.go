@@ -242,6 +242,38 @@ func TestConvertSkipsNonBlackmatrix7RuleProvidersWithWarning(t *testing.T) {
 	}
 }
 
+func TestConvertWarnsOnUnsupportedLogicalRules(t *testing.T) {
+	config := map[string]interface{}{
+		"rules": []interface{}{
+			"AND,((NETWORK,UDP),(DST-PORT,443)),REJECT",
+			"DOMAIN-SUFFIX,example.com,DIRECT",
+		},
+	}
+
+	content, warnings, err := New().Convert(config, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %#v, want one logical-rule warning", warnings)
+	}
+	if !containsAll(warnings[0], "logical rules", "AND") {
+		t.Fatalf("warning = %q, want logical-rule context", warnings[0])
+	}
+
+	var got map[string]interface{}
+	if err := yaml.Unmarshal(content, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	rules := got["rules"].([]interface{})
+	if len(rules) != 1 {
+		t.Fatalf("rules = %#v, want the logical rule to be dropped", rules)
+	}
+	if _, ok := rules[0].(map[string]interface{})["domain_suffix"]; !ok {
+		t.Fatalf("remaining rule = %#v, want domain_suffix", rules[0])
+	}
+}
+
 func containsAll(s string, parts ...string) bool {
 	for _, part := range parts {
 		if !strings.Contains(s, part) {
