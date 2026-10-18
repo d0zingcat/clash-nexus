@@ -117,6 +117,13 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 
 适用于服务商订阅只返回 Clash 格式、目标客户端（如 Loon）无法直接解析的情况。展开时会以 `User-Agent: clash.meta` 请求订阅，并保留 provider 的 `header`、`filter`、`exclude-filter`、`exclude-type`；抓取失败会以 warning 返回，相关策略组回退到 `DIRECT`。
 
+展开不是把 Clash 节点原样照搬，而是先进入目标转换器，按目标格式重新生成节点定义：
+
+- Loon 写入 `[Proxy]` 行，Quantumult X 写入 `[server_local]`，Egern / Stash 写入各自的 YAML 结构
+- 目标不支持的节点类型或字段会被跳过并返回 warning，策略组中的失效引用同步移除；成员全部失效的组回退到 `DIRECT` / `direct`
+- 字段名差异会按目标修正，例如 Stash 的 Hysteria2 使用 `auth`、`up-speed`、`down-speed`，转换时会从 Clash 的 `password`、`up`、`down` 自动映射
+- Loon 中节点重名时使用 `provider - name` 而不是 `[provider] name`，避免行首 `[` 被当成 section header
+
 Web 页面、`/api/convert` 和 `/api/subscribe` 同样支持该选项：JSON 字段 `expandProxyProviders`，或订阅参数 `expand_proxy_providers=1`。
 
 ## Loon 转换

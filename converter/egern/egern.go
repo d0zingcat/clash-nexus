@@ -110,13 +110,14 @@ func buildEgernConfig(config map[string]interface{}, root *yaml.Node, warnings *
 
 	// Proxies
 	proxies := clash.ToMapSlice(config["proxies"])
-	if egernProxies := buildEgernProxies(proxies, warnings); len(egernProxies) > 0 {
+	egernProxies := buildEgernProxies(proxies, warnings)
+	if len(egernProxies) > 0 {
 		out["proxies"] = egernProxies
 	}
 
 	// Policy groups
 	groups := clash.ToMapSlice(config["proxy-groups"])
-	if egernGroups := buildEgernPolicyGroups(groups, providersMap, providerOrder); len(egernGroups) > 0 {
+	if egernGroups := buildEgernPolicyGroups(groups, providersMap, providerOrder, egernProxyNames(egernProxies), warnings); len(egernGroups) > 0 {
 		out["policy_groups"] = egernGroups
 	}
 
@@ -728,12 +729,39 @@ func convertHTTPToEgern(p map[string]interface{}) map[string]interface{} {
 // buildEgernPolicyGroups converts Clash proxy-groups (with optional proxy-providers)
 // to Egern policy_groups. Groups that reference providers via `use:` are converted
 // to `external` type; groups with only `proxies:` keep their original type.
+// egernProxyNames returns the node names that survived Egern proxy conversion.
+func egernProxyNames(proxies []map[string]interface{}) map[string]bool {
+	names := make(map[string]bool, len(proxies))
+	for _, entry := range proxies {
+		for _, raw := range entry {
+			cfg, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if name, ok := cfg["name"].(string); ok && name != "" {
+				names[name] = true
+			}
+		}
+	}
+	return names
+}
+
 func buildEgernPolicyGroups(
 	groups []map[string]interface{},
 	providersMap map[string]interface{},
 	providerOrder []string,
+	available map[string]bool,
+	warnings *[]string,
 ) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0)
+
+	known := converter.BuiltinPolicies()
+	for name := range available {
+		known[name] = true
+	}
+	for name := range converter.ProxyGroupNames(groups) {
+		known[name] = true
+	}
 
 	// Track which provider names have been consumed by groups
 	consumedProviders := map[string]bool{}
@@ -765,6 +793,16 @@ func buildEgernPolicyGroups(
 		interval := clash.MapGetInt(g, "interval", 0)
 		tolerance := clash.MapGetInt(g, "tolerance", 0)
 		timeout := clash.MapGetInt(g, "timeout", 0)
+
+		kept := make([]string, 0, len(proxiesList))
+		for _, proxyName := range proxiesList {
+			if known[proxyName] {
+				kept = append(kept, proxyName)
+				continue
+			}
+			*warnings = append(*warnings, fmt.Sprintf("policy group %q references %q, which the Egern output cannot define; skipping", name, proxyName))
+		}
+		proxiesList = kept
 
 		egernType := clashGroupTypeToEgern(gtype)
 
@@ -827,11 +865,19 @@ func buildEgernPolicyGroups(
 			}
 			// Main group with proxy names + sub-group names
 			policies := append(proxiesList, subGroupNames...)
+			if len(policies) == 0 {
+				*warnings = append(*warnings, fmt.Sprintf("policy group %q has no usable members; falling back to direct", name))
+				policies = []string{"direct"}
+			}
 			grp := buildEgernGroupEntry(egernType, name, policies, interval, tolerance, timeout, filter)
 			out = append(out, grp)
 
 		} else {
 			// Pure proxies group
+			if len(proxiesList) == 0 {
+				*warnings = append(*warnings, fmt.Sprintf("policy group %q has no usable members; falling back to direct", name))
+				proxiesList = []string{"direct"}
+			}
 			grp := buildEgernGroupEntry(egernType, name, proxiesList, interval, tolerance, timeout, filter)
 			out = append(out, grp)
 		}

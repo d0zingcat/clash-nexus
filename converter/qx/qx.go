@@ -713,9 +713,10 @@ var proxyConverters = map[string]proxyConverter{
 // [server_local]
 // ---------------------------------------------------------------------------
 
-func convertServerLocal(proxies []map[string]interface{}) (string, []string) {
+func convertServerLocal(proxies []map[string]interface{}) (string, []string, map[string]bool) {
 	lines := []string{"[server_local]"}
 	var warnings []string
+	available := make(map[string]bool, len(proxies))
 	for _, p := range proxies {
 		ptype := strings.ToLower(clash.MapGetStr(p, "type", ""))
 		conv, ok := proxyConverters[ptype]
@@ -725,9 +726,18 @@ func convertServerLocal(proxies []map[string]interface{}) (string, []string) {
 			lines = append(lines, "; [WARNING] "+w)
 			continue
 		}
-		lines = append(lines, conv(p))
+		line := conv(p)
+		lines = append(lines, line)
+		// Converters may emit a warning comment instead of a server definition
+		// (for example Hysteria2, which Quantumult X cannot express).
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, ";") && !strings.HasPrefix(trimmed, "#") {
+			if name := clash.MapGetStr(p, "name", ""); name != "" {
+				available[name] = true
+			}
+		}
 	}
-	return strings.Join(lines, "\n"), warnings
+	return strings.Join(lines, "\n"), warnings, available
 }
 
 // ---------------------------------------------------------------------------
@@ -753,8 +763,17 @@ func convertServerRemote(providers map[string]interface{}, providerOrder []strin
 // [policy]
 // ---------------------------------------------------------------------------
 
-func convertPolicy(groups []map[string]interface{}) string {
+func convertPolicy(groups []map[string]interface{}, available map[string]bool) (string, []string) {
 	lines := []string{"[policy]"}
+	var warnings []string
+
+	known := converter.BuiltinPolicies()
+	for name := range available {
+		known[name] = true
+	}
+	for name := range converter.ProxyGroupNames(groups) {
+		known[name] = true
+	}
 
 	for _, g := range groups {
 		name := clash.MapGetStr(g, "name", "")
@@ -765,9 +784,14 @@ func convertPolicy(groups []map[string]interface{}) string {
 		tolerance := clash.MapGetInt(g, "tolerance", 100)
 
 		rawProxies := clash.ToStringSlice(g["proxies"])
-		members := make([]string, len(rawProxies))
-		for i, px := range rawProxies {
-			members[i] = lowerPolicy(px)
+		members := make([]string, 0, len(rawProxies))
+		for _, px := range rawProxies {
+			lowered := lowerPolicy(px)
+			if !known[lowered] && !known[px] {
+				warnings = append(warnings, fmt.Sprintf("proxy group %q references %q, which the Quantumult X output cannot define; skipping", name, px))
+				continue
+			}
+			members = append(members, lowered)
 		}
 
 		var resourceTag string
@@ -777,6 +801,11 @@ func convertPolicy(groups []map[string]interface{}) string {
 			resourceTag = uses[0]
 		default:
 			resourceTag = "^(" + strings.Join(uses, "|") + ")$"
+		}
+
+		if len(members) == 0 && resourceTag == "" {
+			warnings = append(warnings, fmt.Sprintf("proxy group %q has no usable members; falling back to direct", name))
+			members = []string{"direct"}
 		}
 
 		buildTokens := func(extra ...string) string {
@@ -813,7 +842,7 @@ func convertPolicy(groups []map[string]interface{}) string {
 		}
 	}
 
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), warnings
 }
 
 // ---------------------------------------------------------------------------
@@ -993,7 +1022,12 @@ func convert(config map[string]interface{}, root *yaml.Node, options converter.O
 	_, proxyChainGroups := buildChainInfo(proxies, groups)
 	chainAffectingPolicies := buildChainAffectingPolicies(groups, proxyChainGroups)
 
-	sections = append(sections, convertPolicy(groups))
+	serverLocalText, serverWarnings, available := convertServerLocal(proxies)
+	allWarnings = append(allWarnings, serverWarnings...)
+
+	policyText, policyWarnings := convertPolicy(groups, available)
+	allWarnings = append(allWarnings, policyWarnings...)
+	sections = append(sections, policyText)
 
 	providerOrder := clash.OrderedKeysFromNode(root, "proxy-providers")
 	_, providersMap := clash.ToOrderedMap(config["proxy-providers"])
@@ -1017,8 +1051,6 @@ func convert(config map[string]interface{}, root *yaml.Node, options converter.O
 	sections = append(sections, filterRemoteText)
 	sections = append(sections, "[rewrite_remote]")
 
-	serverLocalText, serverWarnings := convertServerLocal(proxies)
-	allWarnings = append(allWarnings, serverWarnings...)
 	sections = append(sections, serverLocalText)
 
 	sections = append(sections, filterLocalText)

@@ -271,3 +271,29 @@ func TestConvertRemoteFiltersWithExcludeFilter(t *testing.T) {
 		t.Fatalf("convertRemoteFilters() missing %s in:\n%s", wantB, got)
 	}
 }
+
+func TestConvertPrunesUnsupportedProxyFromGroups(t *testing.T) {
+	config := map[string]interface{}{
+		"proxies": []interface{}{
+			map[string]interface{}{"name": "OK", "type": "ss", "server": "1.2.3.4", "port": 443, "cipher": "aes-128-gcm", "password": "pass"},
+			map[string]interface{}{"name": "BAD", "type": "made-up", "server": "5.6.7.8", "port": 443},
+		},
+		"proxy-groups": []interface{}{
+			map[string]interface{}{"name": "PROXY", "type": "select", "proxies": []interface{}{"OK", "BAD"}},
+		},
+	}
+
+	out, warnings, err := New().Convert(config, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "BAD") {
+		t.Fatalf("expected a warning about BAD, got %v", warnings)
+	}
+	if strings.Contains(string(out), "PROXY = select,OK,BAD") {
+		t.Fatalf("group should not reference unsupported BAD:\n%s", out)
+	}
+	if !strings.Contains(string(out), "PROXY = select,OK") {
+		t.Fatalf("group should keep OK:\n%s", out)
+	}
+}
