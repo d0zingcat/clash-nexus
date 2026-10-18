@@ -215,9 +215,12 @@ func (s *Server) setCachedSubscription(key string, result app.Result) {
 
 func writeSubscription(w http.ResponseWriter, result app.Result) {
 	w.Header().Set("X-Clash-Nexus-Warning-Count", strconv.Itoa(len(result.Warnings)))
-	if result.Extension == ".yaml" || result.Extension == ".yml" {
+	switch result.Extension {
+	case ".yaml", ".yml":
 		w.Header().Set("Content-Type", "application/x-yaml; charset=utf-8")
-	} else {
+	case ".json":
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	default:
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	}
 	w.Header().Set("Content-Disposition", `inline; filename="`+result.Filename+`"`)

@@ -63,7 +63,7 @@ function App() {
     if (target === "qx" && qxFinalProxyChain) {
       link.searchParams.set("qx_final_proxy_chain", "1")
     }
-    if (target === "clash" && expandProxyProviders) {
+    if ((target === "clash" || target === "singbox") && expandProxyProviders) {
       link.searchParams.set("expand_proxy_providers", "1")
     }
     return link.toString()
@@ -100,7 +100,7 @@ function App() {
         if (target === "qx" && qxFinalProxyChain) {
           form.set("qx_final_proxy_chain", "1")
         }
-        if (target === "clash" && expandProxyProviders) {
+        if ((target === "clash" || target === "singbox") && expandProxyProviders) {
           form.set("expand_proxy_providers", "1")
         }
         form.set("file", file)
@@ -115,7 +115,7 @@ function App() {
             yaml: mode === "yaml" ? yaml : undefined,
             url: mode === "url" ? url.trim() : undefined,
             qxFinalProxyChain: target === "qx" && qxFinalProxyChain,
-            expandProxyProviders: target === "clash" && expandProxyProviders,
+            expandProxyProviders: (target === "clash" || target === "singbox") && expandProxyProviders,
           }),
         })
       }
@@ -162,7 +162,7 @@ function App() {
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Local converter</p>
           <h1 className="text-3xl font-semibold tracking-normal md:text-4xl">Clash Nexus</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Clash YAML 转换为 Stash、Loon、Egern 或 Quantumult X。支持粘贴、上传和远程 URL，并为远程配置生成可订阅的转换地址。
+            Clash YAML 转换为 sing-box、Stash、Loon、Egern 或 Quantumult X。支持粘贴、上传和远程 URL，并为远程配置生成可订阅的转换地址。
           </p>
         </div>
         <div className="rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground">127.0.0.1 only</div>
@@ -213,7 +213,7 @@ function App() {
                   </span>
                 </label>
               )}
-              {target === "clash" && (
+              {(target === "clash" || target === "singbox") && (
                 <label className="flex items-start gap-3 rounded-md border bg-muted/25 p-3 text-sm">
                   <input
                     type="checkbox"
@@ -223,7 +223,7 @@ function App() {
                   />
                   <span className="grid gap-1">
                     <span className="font-medium">展开 Proxy Provider 节点</span>
-                    <span className="text-muted-foreground">将 proxy-providers 中的节点展开并固定到 proxies 与 proxy-groups，移除 use 语法，避免部分客户端仅显示 COMPATIBLE 且无法切换节点。</span>
+                    <span className="text-muted-foreground">将 proxy-providers 中的节点展开并固定到 proxies 与 proxy-groups，移除 use 语法；sing-box 没有原生 proxy-provider，建议启用。</span>
                   </span>
                 </label>
               )}

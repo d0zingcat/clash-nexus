@@ -28,7 +28,7 @@ rules:
 
 func TestConvertBytes(t *testing.T) {
 	service := NewService()
-	for _, target := range []string{"loon", "egern"} {
+	for _, target := range []string{"loon", "egern", "singbox"} {
 		t.Run(target, func(t *testing.T) {
 			result, err := service.ConvertBytes(target, []byte(sampleConfig))
 			if err != nil {
@@ -139,4 +139,3 @@ proxy-groups:
 		t.Fatalf("proxy-groups should not contain use: %s", out)
 	}
 }
-
