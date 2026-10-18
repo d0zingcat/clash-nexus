@@ -16,6 +16,7 @@ import (
 	"clash-nexus/converter/loon"
 	"clash-nexus/converter/looninput"
 	"clash-nexus/converter/qx"
+	"clash-nexus/converter/singbox"
 	"clash-nexus/converter/stash"
 )
 
@@ -56,17 +57,21 @@ func NewService() *Service {
 // NewServiceWithFetcher returns a service with custom fetcher for clash converter.
 func NewServiceWithFetcher(fetcher clash.ProviderFetcher) *Service {
 	return &Service{registry: map[string]converter.Converter{
-		"loon":  loon.New(),
-		"clash": clashoutput.NewWithFetcher(fetcher),
-		"egern": egern.New(),
-		"qx":    qx.New(),
-		"stash": stash.New(),
+		"loon":    loon.New(),
+		"clash":   clashoutput.NewWithFetcher(fetcher),
+		"egern":   egern.New(),
+		"qx":      qx.New(),
+		"singbox": singbox.NewWithFetcher(fetcher),
+		"stash":   stash.New(),
 	}}
 }
 
-// SetClashFetcher updates the fetcher used by the clash converter.
+// SetClashFetcher updates the fetcher used by the clash and sing-box converters.
 func (s *Service) SetClashFetcher(fetcher clash.ProviderFetcher) {
 	if conv, ok := s.registry["clash"].(*clashoutput.Converter); ok {
+		conv.Fetcher = fetcher
+	}
+	if conv, ok := s.registry["singbox"].(*singbox.Converter); ok {
 		conv.Fetcher = fetcher
 	}
 }

@@ -71,6 +71,7 @@ func runConvert(service *app.Service, args []string) {
 		fmt.Fprintf(os.Stderr, "\nAvailable targets: %s\n\n", targetHelp)
 		fmt.Fprintf(os.Stderr, "Examples:\n")
 		fmt.Fprintf(os.Stderr, "  %s -target egern input/clash.yaml\n", cmd)
+		fmt.Fprintf(os.Stderr, "  %s -target singbox input/clash.yaml\n", cmd)
 		fmt.Fprintf(os.Stderr, "  %s -target clash -expand-proxy-providers input/clash.yaml\n", cmd)
 		fmt.Fprintf(os.Stderr, "  %s -target loon -input input/clash.yaml -o output/custom.conf\n", cmd)
 		fmt.Fprintf(os.Stderr, "  %s serve -addr 127.0.0.1:8080\n\n", cmd)

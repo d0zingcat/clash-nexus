@@ -2,7 +2,7 @@
 
 将 Clash (mihomo) YAML 配置文件转换为多种代理工具格式。
 
-也支持以 Loon `.conf` 作为输入，转换为 Clash/Mihomo YAML、Egern 或 Quantumult X：
+也支持以 Loon `.conf` 作为输入，转换为 Clash/Mihomo YAML、sing-box、Egern 或 Quantumult X：
 
 ```bash
 ./clash-nexus -source loon -target clash input/loon.conf
@@ -23,6 +23,9 @@ make build
 
 # 转换为 Loon
 ./clash-nexus -target loon input/clash.yaml
+
+# 转换为 sing-box
+./clash-nexus -target singbox input/clash.yaml
 
 # 转换为 Stash
 ./clash-nexus -target stash input/clash.yaml
@@ -96,6 +99,7 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 | 目标 | 格式 | 默认输出路径 |
 |------|------|------------|
 | `loon` (默认) | `.conf` (INI-like) | `output/loon.conf` |
+| `singbox` | `.json` | `output/singbox.json` |
 | `egern` | `.yaml` | `output/egern.yaml` |
 | `stash` | `.yaml` | `output/stash.yaml` |
 
@@ -135,6 +139,60 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 - `proxy-providers` 的 `filter` 正则自动转为 `[Remote Filter]` 的 `NameRegex`
 - 配置 SubStore 解析器以兼容各类订阅格式
 - 转换时自动拉取每个 `proxy-providers` 的订阅 URL，校验内容是否为**通用节点格式**（见下文注意事项）
+
+## sing-box 转换
+
+输出为 sing-box **1.12+** 的 JSON 配置，覆盖 `log`、`dns`、`inbounds`、`outbounds`、`route` 和 `experimental.clash_api`。
+
+### 节点协议
+
+| Clash | sing-box | 说明 |
+|-------|----------|------|
+| ss | shadowsocks | 支持 `obfs`、`v2ray-plugin` |
+| vmess | vmess | 支持 ws/grpc/h2/http/httpupgrade/quic transport |
+| vless | vless | 支持 Reality、flow、uTLS fingerprint |
+| trojan | trojan | 支持 ws/grpc 等 transport |
+| hysteria2 | hysteria2 | 支持端口跳跃、obfs、带宽 |
+| hysteria | hysteria | 支持 auth/auth-str、端口跳跃 |
+| tuic | tuic | 支持拥塞控制、UDP relay mode、0-RTT |
+| wireguard | wireguard endpoint | 输出到顶层 `endpoints`，需要 sing-box 1.11+ |
+| socks5 | socks | — |
+| http | http | TLS 时自动启用 `tls` |
+| anytls | anytls | 需要 sing-box 1.12+ |
+| snell | snell | 仅支持 v4/v6，需要 sing-box 1.14+ |
+| **ssr** | — | ❌ 不支持，输出 warning 并跳过 |
+
+### 配置映射
+
+| Clash | sing-box |
+|-------|----------|
+| `mixed-port` / `port` / `socks-port` | `mixed` / `http` / `socks` inbound |
+| `redir-port` / `tproxy-port` | `redirect` / `tproxy` inbound |
+| `tun` | `tun` inbound |
+| `proxies` | `outbounds` |
+| `proxies` (wireguard) | `endpoints` |
+| `proxy-providers` | 自动抓取并展开到 `outbounds` |
+| `proxy-groups` (select / url-test) | `selector` / `urltest` outbound |
+| `proxy-groups` (fallback / load-balance) | 映射为 `urltest` / `selector` 并输出 warning |
+| `rules` | `route.rules`，`MATCH` 写入 `route.final` |
+| `rule-providers`（`.srs` / `.json`） | `route.rule_set`（remote） |
+| `rule-providers`（Clash YAML / Surge `.list`） | 自动抓取并转换为 `route.rule_set`（inline） |
+| `GEOIP` / `GEOSITE` | 自动生成 SagerNet `sing-geoip` / `sing-geosite` 远程 rule-set |
+| `dns.nameserver` / `fallback` | `dns.servers`（udp/tcp/tls/https/quic/h3） |
+| `dns.nameserver-policy` | `dns.rules` |
+| `dns.enhanced-mode: fake-ip` | `fakeip` DNS server + DNS rule |
+| `hosts` | `hosts` DNS server + DNS rule |
+| `external-controller` / `secret` / `external-ui` | `experimental.clash_api` |
+
+### sing-box 注意事项
+
+- `proxy-providers` 没有 sing-box 原生对应，转换时会自动抓取并展开为静态 `outbounds`；抓取失败会输出 warning，相关策略组回退到 `DIRECT`。`-expand-proxy-providers` 对 sing-box 已不再必需，但仍兼容。
+- Clash YAML / Surge `.list` 格式的 `rule-providers` 会在转换时自动抓取，并转换为 sing-box `inline` rule-set；`.srs` / `.json` 则保留为远程 rule-set。抓取失败、格式不支持或包含无法映射的规则时会输出 warning，并跳过对应规则。
+- 因此 sing-box 目标在存在 `proxy-providers` / 非 `.srs`/`.json` 的 `rule-providers` 时需要联网；纯本地配置不受影响。
+- `GEOIP,LAN` 映射为 `ip_is_private`；其他 `GEOIP`/`GEOSITE` 会生成远程规则集，首次启动需要联网下载。
+- `sniffer`、`experimental` 等 Clash 专属段不会静默丢弃，会以 warning 返回。
+- `wireguard` 节点输出为顶层 `endpoints`，不再使用已移除的 WireGuard outbound。
+- `tun.auto-redirect` 仅 Linux 支持；在 macOS/Windows 上运行时会报错，请按需删除该字段。
 
 ## Egern 转换
 
@@ -227,12 +285,14 @@ blackmatrix7 仓库没有 `rule/Egern` 目录。Egern 官方 FAQ 说明目前支
 │   ├── converter.go           # Converter 接口定义
 │   ├── clash/util.go          # 共享工具函数
 │   ├── loon/loon.go           # Loon 转换器
+│   ├── singbox/               # sing-box 转换器
 │   └── egern/egern.go         # Egern 转换器
 ├── go.mod / go.sum
 ├── input/                     # Clash 源配置（真实配置不纳入版本控制）
 │   └── example.yaml           # 脱敏示例配置
 ├── output/                    # 生成的配置（不纳入版本控制）
 │   ├── loon.conf
+│   ├── singbox.json
 │   └── egern.yaml
 └── docs/                      # 设计文档
 ```
@@ -240,10 +300,11 @@ blackmatrix7 仓库没有 `rule/Egern` 目录。Egern 官方 FAQ 说明目前支
 ## 扩展：新增转换目标
 
 1. 创建 `converter/<name>/<name>.go`，实现 `Converter` 接口（`Name`、`DefaultExtension`、`Convert`）
-2. 在 `main.go` 的 `registry` map 中注册，其他无需改动
+2. 在 `internal/app/app.go` 的 `NewServiceWithFetcher` 中注册，其他无需改动
 
 ## 参考
 
+- [sing-box 文档](https://sing-box.sagernet.org/configuration/)
 - [Egern 文档](https://egernapp.com/docs/intro)
 - [Loon 手册](https://nsloon.app/docs/intro)
 - [Clash (mihomo) 配置文档](https://wiki.metacubex.one/en/config/)

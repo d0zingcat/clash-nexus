@@ -60,11 +60,12 @@ func TestTargets(t *testing.T) {
 		targets[target.Name] = target.Extension
 	}
 	for name, extension := range map[string]string{
-		"clash": ".yaml",
-		"egern": ".yaml",
-		"loon":  ".conf",
-		"qx":    ".conf",
-		"stash": ".yaml",
+		"clash":   ".yaml",
+		"egern":   ".yaml",
+		"loon":    ".conf",
+		"qx":      ".conf",
+		"singbox": ".json",
+		"stash":   ".yaml",
 	} {
 		if targets[name] != extension {
 			t.Fatalf("target %q extension = %q, want %q; targets = %#v", name, targets[name], extension, targets)
@@ -82,6 +83,47 @@ func TestConvertJSONYAML(t *testing.T) {
 	})
 	defer resp.Body.Close()
 	assertConverted(t, resp, "loon")
+}
+
+func TestConvertJSONSingbox(t *testing.T) {
+	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
+	defer ts.Close()
+
+	resp := postJSON(t, ts.URL+"/api/convert", map[string]string{
+		"target": "singbox",
+		"yaml":   testConfig,
+	})
+	defer resp.Body.Close()
+	body := readConvertBody(t, resp)
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(body.Content), &config); err != nil {
+		t.Fatalf("sing-box content is not JSON: %v; content=%s", err, body.Content)
+	}
+	if config["outbounds"] == nil {
+		t.Fatalf("sing-box content has no outbounds: %s", body.Content)
+	}
+}
+
+func TestSubscribeSingboxContentType(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, testConfig)
+	}))
+	defer remote.Close()
+	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/subscribe?target=singbox&url=" + urlQueryEscape(remote.URL))
+	if err != nil {
+		t.Fatalf("GET /api/subscribe error = %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, body=%s", resp.StatusCode, data)
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
 }
 
 func TestConvertJSONLoonToQX(t *testing.T) {
