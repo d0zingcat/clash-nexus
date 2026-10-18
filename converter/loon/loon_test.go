@@ -24,6 +24,73 @@ func TestConvertGeneralHandlesDoh3AndRealIPWildcard(t *testing.T) {
 	}
 }
 
+func TestConvertGeneralEmitsAllowWifiAccessExplicitly(t *testing.T) {
+	disabled := convertGeneral(map[string]interface{}{"allow-lan": false})
+	for _, want := range []string{
+		"allow-wifi-access = false",
+		"wifi-access-http-port = 7222",
+		"wifi-access-socks5-port = 7221",
+	} {
+		if !strings.Contains(disabled, want) {
+			t.Fatalf("convertGeneral() missing %q for allow-lan: false:\n%s", want, disabled)
+		}
+	}
+
+	enabled := convertGeneral(map[string]interface{}{"allow-lan": true})
+	if !strings.Contains(enabled, "allow-wifi-access = true") {
+		t.Fatalf("convertGeneral() missing allow-wifi-access = true:\n%s", enabled)
+	}
+}
+
+func TestConvertHostsSkipsPlainHostPortServer(t *testing.T) {
+	got := convertHosts(map[string]interface{}{
+		"*.example.com": "127.0.0.1",
+	}, map[string]interface{}{
+		"cdn.example.com": []interface{}{
+			"dn-hk.example.com:1066",
+			"https://dn-jp.example.com/dns-query",
+		},
+	})
+
+	if !strings.Contains(got, "cdn.example.com = server:https://dn-jp.example.com/dns-query") {
+		t.Fatalf("convertHosts() did not fall back to the DoH server:\n%s", got)
+	}
+	if strings.Contains(got, "1066") {
+		t.Fatalf("convertHosts() emitted unsupported host:port upstream:\n%s", got)
+	}
+}
+
+func TestConvertHostsWarnsWhenNoCompatibleServer(t *testing.T) {
+	got := convertHosts(nil, map[string]interface{}{
+		"cdn.example.com": "dn-hk.example.com:1066",
+	})
+
+	if !strings.Contains(got, "# [WARNING] no Loon-compatible DNS server for cdn.example.com") {
+		t.Fatalf("convertHosts() missing warning:\n%s", got)
+	}
+	if strings.Contains(got, "cdn.example.com = server:") {
+		t.Fatalf("convertHosts() emitted invalid host mapping:\n%s", got)
+	}
+}
+
+func TestConvertHostsAcceptsSystemAndIP(t *testing.T) {
+	got := convertHosts(nil, map[string]interface{}{
+		"*.ip.example.com":     "223.5.5.5",
+		"*.system.example.com": "system",
+		"*.v6.example.com":     "[2001:db8::1]",
+	})
+
+	for _, want := range []string{
+		"*.ip.example.com = server:223.5.5.5",
+		"*.system.example.com = server:system",
+		"*.v6.example.com = server:2001:db8::1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("convertHosts() missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestConvertRulesKeepsLogicRulesAndMapsNetwork(t *testing.T) {
 	ruleText, _ := convertRulesAndRemoteRules([]interface{}{
 		"AND,((DOMAIN-SUFFIX,example.com),(PROTOCOL,HTTP)),Proxy",

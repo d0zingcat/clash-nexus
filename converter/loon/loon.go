@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -155,13 +157,14 @@ func convertGeneral(config map[string]interface{}) string {
 		lines = append(lines, "ip-mode = ipv4-only")
 	}
 
-	if clash.MapGetBool(config, "allow-lan", false) {
-		lines = append(lines,
-			"allow-wifi-access = true",
-			"wifi-access-http-port = 7222",
-			"wifi-access-socks5-port = 7221",
-		)
-	}
+	// Emit allow-wifi-access explicitly in both states so the result does not
+	// depend on Loon's own default for LAN access.
+	allowLan := clash.MapGetBool(config, "allow-lan", false)
+	lines = append(lines,
+		"allow-wifi-access = "+clash.BoolStr(allowLan),
+		"wifi-access-http-port = 7222",
+		"wifi-access-socks5-port = 7221",
+	)
 
 	lines = append(lines,
 		"proxy-test-url = http://www.gstatic.com/generate_204",
@@ -1020,35 +1023,108 @@ func convertRulesAndRemoteRules(rules []interface{}, ruleProviders map[string]in
 func convertHosts(hosts map[string]interface{}, nameserverPolicy map[string]interface{}) string {
 	lines := []string{"[Host]"}
 
-	for domain, target := range hosts {
-		lines = append(lines, fmt.Sprintf("%s = %v", domain, target))
+	hostNames := make([]string, 0, len(hosts))
+	for domain := range hosts {
+		hostNames = append(hostNames, domain)
+	}
+	sort.Strings(hostNames)
+	for _, domain := range hostNames {
+		lines = append(lines, fmt.Sprintf("%s = %v", domain, hosts[domain]))
 	}
 
 	if len(nameserverPolicy) > 0 {
 		lines = append(lines, "# --- nameserver-policy ---")
-		for domainPattern, dnsServerRaw := range nameserverPolicy {
+		patterns := make([]string, 0, len(nameserverPolicy))
+		for domainPattern := range nameserverPolicy {
+			patterns = append(patterns, domainPattern)
+		}
+		sort.Strings(patterns)
+		for _, domainPattern := range patterns {
 			pattern := strings.TrimSpace(domainPattern)
 			if strings.HasPrefix(pattern, "geosite:") || strings.HasPrefix(pattern, "rule-set:") {
-				lines = append(lines, fmt.Sprintf("# [WARNING] pattern not supported in Loon: %s -> %v", pattern, dnsServerRaw))
+				lines = append(lines, fmt.Sprintf("# [WARNING] pattern not supported in Loon: %s -> %v", pattern, nameserverPolicy[domainPattern]))
 				continue
 			}
 			if strings.HasPrefix(pattern, "+.") {
 				pattern = "*." + pattern[2:]
 			}
-			var server string
-			switch v := dnsServerRaw.(type) {
-			case []interface{}:
-				if len(v) > 0 {
-					server = strings.TrimSpace(fmt.Sprintf("%v", v[0]))
-				}
-			default:
-				server = strings.TrimSpace(fmt.Sprintf("%v", v))
+			if pattern == "" {
+				continue
+			}
+			servers := dnsServerList(nameserverPolicy[domainPattern])
+			server, ok := firstLoonHostServer(servers)
+			if !ok {
+				lines = append(lines, fmt.Sprintf("# [WARNING] no Loon-compatible DNS server for %s: %s", pattern, strings.Join(servers, ",")))
+				continue
 			}
 			lines = append(lines, fmt.Sprintf("%s = server:%s", pattern, server))
 		}
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// dnsServerList normalises a Clash nameserver-policy value, which may be a
+// single string or a list of strings, into a slice.
+func dnsServerList(v interface{}) []string {
+	switch x := v.(type) {
+	case string:
+		return []string{strings.TrimSpace(x)}
+	case []interface{}:
+		out := make([]string, 0, len(x))
+		for _, item := range x {
+			out = append(out, strings.TrimSpace(fmt.Sprintf("%v", item)))
+		}
+		return out
+	case []string:
+		out := make([]string, 0, len(x))
+		for _, item := range x {
+			out = append(out, strings.TrimSpace(item))
+		}
+		return out
+	default:
+		if v == nil {
+			return nil
+		}
+		return []string{strings.TrimSpace(fmt.Sprintf("%v", v))}
+	}
+}
+
+// loonHostServerValue reports whether value can be used after "server:" in
+// Loon's [Host] section. Loon accepts an IP address, "system", or an encrypted
+// DNS URL; plain "host:port" upstreams are not valid there (Loon reports a
+// syntax error and would also need to resolve the upstream first).
+func loonHostServerValue(value string) (string, bool) {
+	value = strings.TrimSpace(strings.Trim(value, `'"`))
+	// Clash nameserver entries may carry options such as "#Fallback".
+	if i := strings.IndexByte(value, '#'); i >= 0 {
+		value = strings.TrimSpace(value[:i])
+	}
+	if value == "" {
+		return "", false
+	}
+	if strings.EqualFold(value, "system") {
+		return "system", true
+	}
+	lower := strings.ToLower(value)
+	for _, prefix := range []string{"https://", "h3://", "quic://"} {
+		if strings.HasPrefix(lower, prefix) {
+			return value, true
+		}
+	}
+	if ip := net.ParseIP(strings.Trim(value, "[]")); ip != nil {
+		return strings.Trim(value, "[]"), true
+	}
+	return "", false
+}
+
+func firstLoonHostServer(servers []string) (string, bool) {
+	for _, server := range servers {
+		if value, ok := loonHostServerValue(server); ok {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 // ---------------------------------------------------------------------------
