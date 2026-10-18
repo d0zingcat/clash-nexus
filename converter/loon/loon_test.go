@@ -110,6 +110,23 @@ func TestConvertRulesMapsNestedLogicTokens(t *testing.T) {
 	}
 }
 
+func TestConvertRulesDeduplicatesExpandedLANGEOIP(t *testing.T) {
+	ruleText, _ := convertRulesAndRemoteRules([]interface{}{
+		"IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
+		"GEOIP,LAN,DIRECT",
+	}, nil, nil)
+
+	const want = "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve"
+	if got := strings.Count(ruleText, want); got != 1 {
+		t.Fatalf("expanded LAN rule count = %d, want 1:\n%s", got, ruleText)
+	}
+	for _, cidr := range []string{"10.0.0.0/8", "127.0.0.0/8", "192.168.0.0/16"} {
+		if !strings.Contains(ruleText, "IP-CIDR,"+cidr+",DIRECT,no-resolve") {
+			t.Fatalf("missing expanded LAN CIDR %s:\n%s", cidr, ruleText)
+		}
+	}
+}
+
 func TestConvertRulesKeepsLogicRulesAndMapsNetwork(t *testing.T) {
 	ruleText, _ := convertRulesAndRemoteRules([]interface{}{
 		"AND,((DOMAIN-SUFFIX,example.com),(PROTOCOL,HTTP)),Proxy",

@@ -219,15 +219,42 @@ func ipCIDRRule(ip net.IP) (string, string) {
 // [general]
 // ---------------------------------------------------------------------------
 
-func convertGeneral(_ map[string]interface{}) string {
-	return strings.Join([]string{
+func convertGeneral(config map[string]interface{}) string {
+	lines := []string{
 		"[general]",
 		"resource_parser_url = https://cdn.jsdelivr.net/gh/KOP-XIAO/QuantumultX@master/Scripts/resource-parser.js",
 		"server_check_url = http://www.gstatic.com/generate_204",
 		"network_check_url = http://wifi.vivo.com.cn/generate_204",
 		"server_check_timeout = 5000",
-		"udp_drop_list = QUIC",
-	}, "\n")
+	}
+	// QX cannot express Clash logic rules, but a UDP/443 REJECT rule has a
+	// direct equivalent in udp_drop_list. Only emit it when the source asks
+	// for that behaviour instead of always dropping QUIC.
+	if hasQUICBlockRule(config) {
+		lines = append(lines, "udp_drop_list = QUIC")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// hasQUICBlockRule reports whether the Clash rules contain an AND rule that
+// matches UDP/443 and rejects it, e.g.
+// AND,((NETWORK,UDP),(DST-PORT,443)),REJECT.
+func hasQUICBlockRule(config map[string]interface{}) bool {
+	rules, _ := config["rules"].([]interface{})
+	for _, raw := range rules {
+		rule := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", raw)))
+		compact := strings.NewReplacer(" ", "", "\t", "").Replace(rule)
+		if !strings.HasPrefix(compact, "AND,((") {
+			continue
+		}
+		if !strings.HasSuffix(compact, ",REJECT") && !strings.HasSuffix(compact, ",REJECT-DROP") {
+			continue
+		}
+		if strings.Contains(compact, "(NETWORK,UDP)") && strings.Contains(compact, "(DST-PORT,443)") {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------

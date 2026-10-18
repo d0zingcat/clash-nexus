@@ -947,6 +947,14 @@ func convertRulesAndRemoteRules(rules []interface{}, ruleProviders map[string]in
 	}
 
 	seenRemote := map[string]bool{}
+	seenLocal := map[string]bool{}
+	appendLocal := func(line string) {
+		if seenLocal[line] {
+			return
+		}
+		seenLocal[line] = true
+		localLines = append(localLines, line)
+	}
 
 	for _, ruleRaw := range rules {
 		if ruleRaw == nil {
@@ -993,10 +1001,10 @@ func convertRulesAndRemoteRules(rules []interface{}, ruleProviders map[string]in
 			if len(parts) > 1 {
 				policy = parts[1]
 			}
-			localLines = append(localLines, "FINAL,"+policy)
+			appendLocal("FINAL," + policy)
 
 		case "DST-PORT":
-			localLines = append(localLines, "DEST-PORT,"+strings.Join(parts[1:], ","))
+			appendLocal("DEST-PORT," + strings.Join(parts[1:], ","))
 
 		case "GEOIP":
 			// Clash supports GEOIP,LAN; Loon does not — expand to private CIDRs.
@@ -1009,23 +1017,23 @@ func convertRulesAndRemoteRules(rules []interface{}, ruleProviders map[string]in
 					"10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
 					"169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4",
 				} {
-					localLines = append(localLines, fmt.Sprintf("IP-CIDR,%s,%s,no-resolve", cidr, policy))
+					appendLocal(fmt.Sprintf("IP-CIDR,%s,%s,no-resolve", cidr, policy))
 				}
 			} else {
-				localLines = append(localLines, strings.Join(parts, ","))
+				appendLocal(strings.Join(parts, ","))
 			}
 
 		case "NETWORK":
-			localLines = append(localLines, "PROTOCOL,"+strings.Join(parts[1:], ","))
+			appendLocal("PROTOCOL," + strings.Join(parts[1:], ","))
 
 		case "AND", "OR", "NOT":
-			localLines = append(localLines, convertLogicRule(ruleStr))
+			appendLocal(convertLogicRule(ruleStr))
 
 		default:
 			if unsupportedRuleTypes[ruleType] {
 				localLines = append(localLines, "# [WARNING] Unsupported rule type in Loon: "+strings.Join(parts, ","))
 			} else {
-				localLines = append(localLines, strings.Join(parts, ","))
+				appendLocal(strings.Join(parts, ","))
 			}
 		}
 	}
