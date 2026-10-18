@@ -33,17 +33,35 @@ func (c *Converter) Convert(config map[string]interface{}, _ *yaml.Node) ([]byte
 
 func buildConfig(config map[string]interface{}, warnings *[]string) map[string]interface{} {
 	out := make(map[string]interface{})
+
+	// Build proxies first so proxy-groups can drop members that Stash cannot
+	// represent (for example nodes missing required fields).
+	proxyNames := map[string]bool{}
+	if raw, ok := config["proxies"]; ok {
+		if proxies, ok := buildProxies(raw, warnings); ok {
+			out["proxies"] = proxies
+			for _, item := range proxies {
+				proxy, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if name, ok := proxy["name"].(string); ok && name != "" {
+					proxyNames[name] = true
+				}
+			}
+		}
+	}
+
 	for _, key := range sortedKeys(config) {
 		value := config[key]
+		if key == "proxies" {
+			continue
+		}
 		switch key {
 		case "mode", "log-level", "hosts":
 			out[key] = value
-		case "proxies":
-			if proxies, ok := buildProxies(value, warnings); ok {
-				out[key] = proxies
-			}
 		case "proxy-groups":
-			if groups, ok := buildProxyGroups(value, warnings); ok {
+			if groups, ok := buildProxyGroups(value, warnings, proxyNames); ok {
 				out[key] = groups
 			}
 		case "proxy-providers":
@@ -90,11 +108,24 @@ func buildDNSConfig(value interface{}, warnings *[]string) (map[string]interface
 	return out, true
 }
 
-func buildProxyGroups(value interface{}, warnings *[]string) ([]interface{}, bool) {
+func buildProxyGroups(value interface{}, warnings *[]string, proxyNames map[string]bool) ([]interface{}, bool) {
 	groups, ok := value.([]interface{})
 	if !ok {
 		*warnings = append(*warnings, "dropping proxy-groups: expected sequence")
 		return nil, false
+	}
+
+	// Groups may reference other groups, so collect every group name first.
+	known := converter.BuiltinPolicies()
+	for name := range proxyNames {
+		known[name] = true
+	}
+	for _, raw := range groups {
+		if group, ok := raw.(map[string]interface{}); ok {
+			if name, ok := group["name"].(string); ok && name != "" {
+				known[name] = true
+			}
+		}
 	}
 
 	out := make([]interface{}, 0, len(groups))
@@ -105,17 +136,64 @@ func buildProxyGroups(value interface{}, warnings *[]string) ([]interface{}, boo
 			continue
 		}
 
+		groupName := ""
+		if name, ok := group["name"].(string); ok {
+			groupName = name
+		}
+
 		rebuilt := make(map[string]interface{})
 		for _, key := range sortedKeys(group) {
-			if _, allowed := stashProxyGroupFields[key]; allowed {
+			if _, allowed := stashProxyGroupFields[key]; !allowed {
+				*warnings = append(*warnings, fmt.Sprintf("removed unsupported proxy group field %q", key))
+				continue
+			}
+			if key != "proxies" {
 				rebuilt[key] = group[key]
 				continue
 			}
-			*warnings = append(*warnings, fmt.Sprintf("removed unsupported proxy group field %q", key))
+
+			members := stringList(group[key])
+			kept := make([]interface{}, 0, len(members))
+			for _, member := range members {
+				if known[member] {
+					kept = append(kept, member)
+					continue
+				}
+				*warnings = append(*warnings, fmt.Sprintf("proxy group %q references %q, which the Stash output cannot define; skipping", groupName, member))
+			}
+			rebuilt[key] = kept
+		}
+
+		if members, hasMembers := rebuilt["proxies"].([]interface{}); hasMembers && len(members) == 0 {
+			_, hasUses := rebuilt["use"]
+			_, includeAll := rebuilt["include-all"]
+			if !hasUses && !includeAll {
+				*warnings = append(*warnings, fmt.Sprintf("proxy group %q has no usable members; falling back to DIRECT", groupName))
+				rebuilt["proxies"] = []interface{}{"DIRECT"}
+			}
 		}
 		out = append(out, rebuilt)
 	}
 	return out, true
+}
+
+func stringList(value interface{}) []string {
+	switch v := value.(type) {
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []string:
+		return v
+	case string:
+		return []string{v}
+	default:
+		return nil
+	}
 }
 
 func buildProviders(value interface{}, kind string, allowed map[string]struct{}, warnings *[]string) (map[string]interface{}, bool) {
@@ -291,6 +369,8 @@ func buildProxy(proxy map[string]interface{}, warnings *[]string) (map[string]in
 		return nil, false
 	}
 
+	proxy = normalizeStashProxy(proxy, proxyType)
+
 	allowed, supported := stashProxyFields[proxyType]
 	if !supported {
 		*warnings = append(*warnings, fmt.Sprintf("dropping proxy %q: unsupported type %q", name, proxyType))
@@ -315,6 +395,35 @@ func buildProxy(proxy map[string]interface{}, warnings *[]string) (map[string]in
 		))
 	}
 	return out, true
+}
+
+// normalizeStashProxy translates field names used by Clash/mihomo into the
+// names Stash expects. Clash and Stash largely share a schema, but Hysteria2
+// authentication and bandwidth limits differ.
+func normalizeStashProxy(proxy map[string]interface{}, proxyType string) map[string]interface{} {
+	if proxyType != "hysteria2" {
+		return proxy
+	}
+
+	out := make(map[string]interface{}, len(proxy))
+	for key, value := range proxy {
+		out[key] = value
+	}
+	if _, exists := out["auth"]; !exists {
+		if password, ok := out["password"]; ok {
+			out["auth"] = password
+		}
+	}
+	delete(out, "password")
+	if up, ok := out["up"]; ok {
+		out["up-speed"] = up
+		delete(out, "up")
+	}
+	if down, ok := out["down"]; ok {
+		out["down-speed"] = down
+		delete(out, "down")
+	}
+	return out
 }
 
 func missingRequiredProxyFields(proxy map[string]interface{}, proxyType string) []string {

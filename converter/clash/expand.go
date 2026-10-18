@@ -152,6 +152,17 @@ type ExpandOptions struct {
 	Fetcher  ProviderFetcher
 	BasePath string
 	RootNode *yaml.Node
+	// NamePrefix decorates a node name when it collides with an existing proxy.
+	// It defaults to "[provider] name". Targets with line-based syntax (Loon)
+	// can override it to avoid producing names that look like section headers.
+	NamePrefix func(providerName, proxyName string) string
+}
+
+func (o ExpandOptions) namePrefix(providerName, proxyName string) string {
+	if o.NamePrefix != nil {
+		return o.NamePrefix(providerName, proxyName)
+	}
+	return fmt.Sprintf("[%s] %s", providerName, proxyName)
 }
 
 type providerNode struct {
@@ -267,13 +278,14 @@ func ExpandProxyProviders(config map[string]interface{}, opts ExpandOptions) ([]
 			// Disambiguate name if colliding with top-level or other providers
 			finalName := origName
 			if assignedNames[finalName] {
-				finalName = fmt.Sprintf("[%s] %s", providerName, origName)
+				base := opts.namePrefix(providerName, origName)
+				finalName = base
 				if assignedNames[finalName] {
 					idx := 2
-					for assignedNames[fmt.Sprintf("[%s] %s (%d)", providerName, origName, idx)] {
+					for assignedNames[fmt.Sprintf("%s (%d)", base, idx)] {
 						idx++
 					}
-					finalName = fmt.Sprintf("[%s] %s (%d)", providerName, origName, idx)
+					finalName = fmt.Sprintf("%s (%d)", base, idx)
 				}
 			}
 			assignedNames[finalName] = true

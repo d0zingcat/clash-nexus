@@ -103,6 +103,29 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 | `egern` | `.yaml` | `output/egern.yaml` |
 | `stash` | `.yaml` | `output/stash.yaml` |
 
+### 展开 proxy-providers
+
+使用 `-expand-proxy-providers` 可以在转换前抓取所有 `proxy-providers`，把其中的节点固定写入目标的节点列表和策略组，并移除 `use` 语法：
+
+```bash
+# 把只提供 Clash 订阅的服务商节点直接内联到 Loon 配置
+./clash-nexus -target loon -expand-proxy-providers input/clash.yaml
+
+# 同样适用于 Egern、Quantumult X、Stash 和 Clash
+./clash-nexus -target egern -expand-proxy-providers input/clash.yaml
+```
+
+适用于服务商订阅只返回 Clash 格式、目标客户端（如 Loon）无法直接解析的情况。展开时会以 `User-Agent: clash.meta` 请求订阅，并保留 provider 的 `header`、`filter`、`exclude-filter`、`exclude-type`；抓取失败会以 warning 返回，相关策略组回退到 `DIRECT`。
+
+展开不是把 Clash 节点原样照搬，而是先进入目标转换器，按目标格式重新生成节点定义：
+
+- Loon 写入 `[Proxy]` 行，Quantumult X 写入 `[server_local]`，Egern / Stash 写入各自的 YAML 结构
+- 目标不支持的节点类型或字段会被跳过并返回 warning，策略组中的失效引用同步移除；成员全部失效的组回退到 `DIRECT` / `direct`
+- 字段名差异会按目标修正，例如 Stash 的 Hysteria2 使用 `auth`、`up-speed`、`down-speed`，转换时会从 Clash 的 `password`、`up`、`down` 自动映射
+- Loon 中节点重名时使用 `provider - name` 而不是 `[provider] name`，避免行首 `[` 被当成 section header
+
+Web 页面、`/api/convert` 和 `/api/subscribe` 同样支持该选项：JSON 字段 `expandProxyProviders`，或订阅参数 `expand_proxy_providers=1`。
+
 ## Loon 转换
 
 ### 节点协议
@@ -139,6 +162,7 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 - `proxy-providers` 的 `filter` 正则自动转为 `[Remote Filter]` 的 `NameRegex`
 - 配置 SubStore 解析器以兼容各类订阅格式
 - 转换时自动拉取每个 `proxy-providers` 的订阅 URL，校验内容是否为**通用节点格式**（见下文注意事项）
+- 使用 `-expand-proxy-providers` 时，节点会被抓取并写入 `[Proxy]`，`[Remote Proxy]` 与 `[Remote Filter]` 留空，策略组直接引用静态节点
 
 ## sing-box 转换
 
@@ -254,6 +278,8 @@ https://example.com/subscribe?token=xxx&flag=clash
 ```
 
 转换时若检测到订阅内容不合规，输出文件中会在对应条目上方输出 `# [WARNING]` 提示。
+
+如果服务商只提供 Clash 专属订阅，可加上 `-expand-proxy-providers`：转换器会按 Clash 格式抓取节点并内联到 `[Proxy]`，不再把订阅 URL 写入 `[Remote Proxy]`。
 
 ### Egern 的 rule-providers 使用 Surge 规则集
 

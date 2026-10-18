@@ -698,3 +698,91 @@ func TestConvertPreservesProxyGroupExcludeFilter(t *testing.T) {
 		t.Errorf("exclude-type not preserved: %v", group["exclude-type"])
 	}
 }
+
+func TestConvertMapsHysteria2ClashFieldsToStash(t *testing.T) {
+	input := map[string]interface{}{
+		"proxies": []interface{}{
+			map[string]interface{}{
+				"name":     "hy2",
+				"type":     "hysteria2",
+				"server":   "hy2.example.com",
+				"port":     443,
+				"password": "secret",
+				"up":       100,
+				"down":     200,
+				"sni":      "hy2.example.com",
+			},
+		},
+		"proxy-groups": []interface{}{
+			map[string]interface{}{
+				"name":    "PROXY",
+				"type":    "select",
+				"proxies": []interface{}{"hy2"},
+			},
+		},
+	}
+
+	out, warnings, err := New().Convert(input, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+
+	var parsed map[string]interface{}
+	if err := yaml.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	proxies := parsed["proxies"].([]interface{})
+	proxy := proxies[0].(map[string]interface{})
+	if got := proxy["auth"]; got != "secret" {
+		t.Errorf("auth = %v, want secret", got)
+	}
+	if got := proxy["up-speed"]; got != 100 {
+		t.Errorf("up-speed = %v, want 100", got)
+	}
+	if got := proxy["down-speed"]; got != 200 {
+		t.Errorf("down-speed = %v, want 200", got)
+	}
+	for _, field := range []string{"password", "up", "down"} {
+		if _, exists := proxy[field]; exists {
+			t.Errorf("field %q should have been translated, got %v", field, proxy[field])
+		}
+	}
+}
+
+func TestConvertPrunesDroppedProxyFromGroups(t *testing.T) {
+	input := map[string]interface{}{
+		"proxies": []interface{}{
+			map[string]interface{}{"name": "ok", "type": "ss", "server": "1.2.3.4", "port": 443, "cipher": "aes-128-gcm", "password": "pass"},
+			map[string]interface{}{"name": "bad", "type": "unsupported-type", "server": "5.6.7.8", "port": 443},
+		},
+		"proxy-groups": []interface{}{
+			map[string]interface{}{
+				"name":    "PROXY",
+				"type":    "select",
+				"proxies": []interface{}{"ok", "bad", "DIRECT"},
+			},
+		},
+	}
+
+	out, warnings, err := New().Convert(input, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+	if !containsWarningForField(warnings, "unsupported-type") {
+		t.Fatalf("expected warning about dropped proxy, got %v", warnings)
+	}
+
+	var parsed map[string]interface{}
+	if err := yaml.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	groups := parsed["proxy-groups"].([]interface{})
+	group := groups[0].(map[string]interface{})
+	members := group["proxies"].([]interface{})
+	if len(members) != 2 || members[0] != "ok" || members[1] != "DIRECT" {
+		t.Fatalf("group members = %#v, want [ok DIRECT]", members)
+	}
+}

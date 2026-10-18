@@ -139,3 +139,95 @@ proxy-groups:
 		t.Fatalf("proxy-groups should not contain use: %s", out)
 	}
 }
+
+func TestConvertExpandsProxyProvidersForEveryTarget(t *testing.T) {
+	mockSub := `
+proxies:
+  - name: ExpandedNode
+    type: ss
+    server: 1.2.3.4
+    port: 443
+    cipher: aes-128-gcm
+    password: pass
+`
+	config := `
+proxy-providers:
+  my-provider:
+    type: http
+    url: https://example.com/sub.yaml
+proxy-groups:
+  - name: PROXY
+    type: select
+    use:
+      - my-provider
+rules:
+  - MATCH,PROXY
+`
+	for _, target := range []string{"clash", "loon", "egern", "qx", "singbox", "stash"} {
+		t.Run(target, func(t *testing.T) {
+			service := NewServiceWithFetcher(&appMockFetcher{data: []byte(mockSub)})
+			res, err := service.ConvertBytesWithOptions(target, []byte(config), converter.Options{
+				ExpandProxyProviders: true,
+			})
+			if err != nil {
+				t.Fatalf("ConvertBytesWithOptions(%s) error = %v", target, err)
+			}
+			out := string(res.Content)
+			if strings.Contains(out, "https://example.com/sub.yaml") {
+				t.Fatalf("%s output should not reference the provider subscription: %s", target, out)
+			}
+			if strings.Contains(out, "proxy-providers") {
+				t.Fatalf("%s output should not contain proxy-providers: %s", target, out)
+			}
+			if !strings.Contains(out, "ExpandedNode") {
+				t.Fatalf("%s output should contain ExpandedNode: %s", target, out)
+			}
+		})
+	}
+}
+
+func TestConvertLoonUsesSafeExpandedNamePrefix(t *testing.T) {
+	mockSub := `
+proxies:
+  - name: Shared
+    type: ss
+    server: 1.2.3.4
+    port: 443
+    cipher: aes-128-gcm
+    password: pass
+`
+	config := `
+proxies:
+  - name: Shared
+    type: ss
+    server: 5.6.7.8
+    port: 443
+    cipher: aes-128-gcm
+    password: pass
+proxy-providers:
+  my-provider:
+    type: http
+    url: https://example.com/sub.yaml
+proxy-groups:
+  - name: PROXY
+    type: select
+    use:
+      - my-provider
+rules:
+  - MATCH,PROXY
+`
+	service := NewServiceWithFetcher(&appMockFetcher{data: []byte(mockSub)})
+	res, err := service.ConvertBytesWithOptions("loon", []byte(config), converter.Options{
+		ExpandProxyProviders: true,
+	})
+	if err != nil {
+		t.Fatalf("ConvertBytesWithOptions error = %v", err)
+	}
+	out := string(res.Content)
+	if !strings.Contains(out, "my-provider - Shared") {
+		t.Fatalf("loon output should use a plain provider prefix: %s", out)
+	}
+	if strings.Contains(out, "[my-provider] Shared") {
+		t.Fatalf("loon output should not use a bracketed provider prefix: %s", out)
+	}
+}

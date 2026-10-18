@@ -228,3 +228,29 @@ func TestConvertGeneralEmitsQUICDropOnlyForQUICBlockRule(t *testing.T) {
 		t.Fatalf("convertGeneral() emitted udp_drop_list without a QUIC block rule:\n%s", withoutRule)
 	}
 }
+
+func TestConvertPrunesUnsupportedProxyFromPolicy(t *testing.T) {
+	config := map[string]interface{}{
+		"proxies": []interface{}{
+			map[string]interface{}{"name": "OK", "type": "ss", "server": "1.2.3.4", "port": 443, "cipher": "aes-128-gcm", "password": "pass"},
+			map[string]interface{}{"name": "HY2", "type": "hysteria2", "server": "5.6.7.8", "port": 443, "password": "pass"},
+		},
+		"proxy-groups": []interface{}{
+			map[string]interface{}{"name": "PROXY", "type": "select", "proxies": []interface{}{"OK", "HY2"}},
+		},
+	}
+
+	out, warnings, err := New().Convert(config, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "HY2") {
+		t.Fatalf("expected a warning about HY2, got %v", warnings)
+	}
+	if strings.Contains(string(out), "static = PROXY, OK, HY2") {
+		t.Fatalf("policy should not reference unsupported HY2:\n%s", out)
+	}
+	if !strings.Contains(string(out), "static = PROXY, OK") {
+		t.Fatalf("policy should keep OK:\n%s", out)
+	}
+}

@@ -282,3 +282,33 @@ func containsAll(s string, parts ...string) bool {
 	}
 	return true
 }
+
+func TestConvertPrunesUnsupportedProxyFromPolicyGroups(t *testing.T) {
+	config := map[string]interface{}{
+		"proxies": []interface{}{
+			map[string]interface{}{"name": "OK", "type": "ss", "server": "1.2.3.4", "port": 443, "cipher": "aes-128-gcm", "password": "pass"},
+			map[string]interface{}{"name": "SSR", "type": "ssr", "server": "5.6.7.8", "port": 443, "cipher": "aes-128-cfb", "password": "pass", "protocol": "origin", "obfs": "plain"},
+		},
+		"proxy-groups": []interface{}{
+			map[string]interface{}{"name": "PROXY", "type": "select", "proxies": []interface{}{"OK", "SSR"}},
+		},
+	}
+
+	content, warnings, err := New().Convert(config, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+	if !containsAll(strings.Join(warnings, "\n"), "SSR") {
+		t.Fatalf("expected a warning about SSR, got %v", warnings)
+	}
+	var got map[string]interface{}
+	if err := yaml.Unmarshal(content, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	groups := got["policy_groups"].([]interface{})
+	group := groups[0].(map[string]interface{})["select"].(map[string]interface{})
+	policies := group["policies"].([]interface{})
+	if len(policies) != 1 || policies[0] != "OK" {
+		t.Fatalf("policies = %#v, want [OK]", policies)
+	}
+}

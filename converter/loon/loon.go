@@ -14,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"clash-nexus/converter"
 	"clash-nexus/converter/clash"
 )
 
@@ -31,8 +32,8 @@ func (c *Converter) DefaultExtension() string { return ".conf" }
 
 // Convert transforms a Clash config map into a Loon .conf byte slice.
 func (c *Converter) Convert(config map[string]interface{}, root *yaml.Node) ([]byte, []string, error) {
-	result := convert(config, root)
-	return []byte(result), nil, nil
+	result, warnings := convert(config, root)
+	return []byte(result), warnings, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -661,24 +662,28 @@ var proxyConverters = map[string]proxyConverter{
 	"anytls":    convertAnyTLS,
 }
 
-func convertProxies(proxies []map[string]interface{}) string {
+func convertProxies(proxies []map[string]interface{}) (string, map[string]bool) {
 	lines := []string{"[Proxy]"}
+	available := make(map[string]bool, len(proxies))
 	for _, p := range proxies {
 		ptype := strings.ToLower(clash.MapGetStr(p, "type", ""))
 		if conv, ok := proxyConverters[ptype]; ok {
 			lines = append(lines, conv(p))
+			if name := clash.MapGetStr(p, "name", ""); name != "" {
+				available[name] = true
+			}
 		} else {
 			lines = append(lines, fmt.Sprintf("# [WARNING] Unsupported proxy type '%s': %s", ptype, clash.MapGetStr(p, "name", "?")))
 		}
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), available
 }
 
 // ---------------------------------------------------------------------------
 // Proxy Chain
 // ---------------------------------------------------------------------------
 
-func convertProxyChains(proxies []map[string]interface{}) (string, map[string]string) {
+func convertProxyChains(proxies []map[string]interface{}, available map[string]bool) (string, map[string]string) {
 	lines := []string{"[Proxy Chain]"}
 	chainMap := map[string]string{}
 	for _, p := range proxies {
@@ -687,6 +692,9 @@ func convertProxyChains(proxies []map[string]interface{}) (string, map[string]st
 			continue
 		}
 		name := clash.MapGetStr(p, "name", "")
+		if !available[name] {
+			continue
+		}
 		chainName := name + " (Chain)"
 		lines = append(lines, fmt.Sprintf("%s = %s,%s,udp=true", chainName, dialer, name))
 		chainMap[name] = chainName
@@ -829,8 +837,23 @@ func convertRemoteFilters(groups []map[string]interface{}, providers map[string]
 // Proxy Group
 // ---------------------------------------------------------------------------
 
-func convertProxyGroups(groups []map[string]interface{}, chainMap map[string]string) string {
+func convertProxyGroups(groups []map[string]interface{}, chainMap map[string]string, available map[string]bool) (string, []string) {
 	lines := []string{"[Proxy Group]"}
+	var warnings []string
+
+	known := converter.BuiltinPolicies()
+	for name := range available {
+		known[name] = true
+	}
+	for name := range converter.ProxyGroupNames(groups) {
+		known[name] = true
+	}
+	// A chain entry only exists when its base proxy was emitted.
+	for base, chain := range chainMap {
+		if available[base] {
+			known[chain] = true
+		}
+	}
 
 	for _, g := range groups {
 		name := clash.MapGetStr(g, "name", "")
@@ -838,14 +861,23 @@ func convertProxyGroups(groups []map[string]interface{}, chainMap map[string]str
 
 		members := []string{}
 		for _, px := range clash.ToStringSlice(g["proxies"]) {
-			if cn, ok := chainMap[px]; ok {
-				members = append(members, cn)
-			} else {
-				members = append(members, px)
+			mapped := px
+			if cn, ok := chainMap[px]; ok && available[px] {
+				mapped = cn
 			}
+			if !known[mapped] {
+				warnings = append(warnings, fmt.Sprintf("proxy group %q references %q, which the Loon output cannot define; skipping", name, px))
+				continue
+			}
+			members = append(members, mapped)
 		}
-		if uses := clash.ToStringSlice(g["use"]); len(uses) > 0 {
+		uses := clash.ToStringSlice(g["use"])
+		if len(uses) > 0 {
 			members = append(members, name+"_Filter")
+		}
+		if len(members) == 0 {
+			warnings = append(warnings, fmt.Sprintf("proxy group %q has no usable members; falling back to DIRECT", name))
+			members = []string{"DIRECT"}
 		}
 
 		memberStr := strings.Join(members, ",")
@@ -891,7 +923,7 @@ func convertProxyGroups(groups []map[string]interface{}, chainMap map[string]str
 		}
 	}
 
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), warnings
 }
 
 // ---------------------------------------------------------------------------
@@ -1156,15 +1188,17 @@ func firstLoonHostServer(servers []string) (string, bool) {
 // Main assembly
 // ---------------------------------------------------------------------------
 
-func convert(config map[string]interface{}, root *yaml.Node) string {
+func convert(config map[string]interface{}, root *yaml.Node) (string, []string) {
 	sections := []string{}
+	var warnings []string
 
 	sections = append(sections, convertGeneral(config))
 
 	proxies := clash.ToMapSlice(config["proxies"])
-	sections = append(sections, convertProxies(proxies))
+	proxyText, available := convertProxies(proxies)
+	sections = append(sections, proxyText)
 
-	proxyChainText, chainMap := convertProxyChains(proxies)
+	proxyChainText, chainMap := convertProxyChains(proxies, available)
 	sections = append(sections, proxyChainText)
 
 	providerOrder := clash.OrderedKeysFromNode(root, "proxy-providers")
@@ -1180,7 +1214,9 @@ func convert(config map[string]interface{}, root *yaml.Node) string {
 	groups := clash.ToMapSlice(config["proxy-groups"])
 	sections = append(sections, convertRemoteFilters(groups, providersMap))
 
-	sections = append(sections, convertProxyGroups(groups, chainMap))
+	groupText, groupWarnings := convertProxyGroups(groups, chainMap, available)
+	warnings = append(warnings, groupWarnings...)
+	sections = append(sections, groupText)
 
 	rules, _ := config["rules"].([]interface{})
 	ruleProviderOrder := clash.OrderedKeysFromNode(root, "rule-providers")
@@ -1216,5 +1252,5 @@ func convert(config map[string]interface{}, root *yaml.Node) string {
 		"[MITM]",
 	)
 
-	return strings.Join(sections, "\n\n") + "\n"
+	return strings.Join(sections, "\n\n") + "\n", warnings
 }
