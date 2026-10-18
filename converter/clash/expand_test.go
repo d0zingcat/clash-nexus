@@ -51,15 +51,15 @@ proxies:
 		},
 		"proxy-groups": []interface{}{
 			map[string]interface{}{
-				"name": "HK Group",
-				"type": "select",
-				"use":  []interface{}{"airport-a"},
+				"name":   "HK Group",
+				"type":   "select",
+				"use":    []interface{}{"airport-a"},
 				"filter": "HK",
 			},
 			map[string]interface{}{
-				"name": "All Nodes",
-				"type": "select",
-				"use":  []interface{}{"airport-a"},
+				"name":    "All Nodes",
+				"type":    "select",
+				"use":     []interface{}{"airport-a"},
 				"proxies": []interface{}{"DIRECT"},
 			},
 		},
@@ -133,10 +133,10 @@ proxies:
 	config := map[string]interface{}{
 		"proxies": []interface{}{
 			map[string]interface{}{
-				"name": "Node 1",
-				"type": "ss",
+				"name":   "Node 1",
+				"type":   "ss",
 				"server": "0.0.0.0",
-				"port": 8388,
+				"port":   8388,
 			},
 		},
 		"proxy-providers": map[string]interface{}{
@@ -151,9 +151,9 @@ proxies:
 		},
 		"proxy-groups": []interface{}{
 			map[string]interface{}{
-				"name": "Group",
-				"type": "select",
-				"use":  []interface{}{"sub-a", "sub-b"},
+				"name":   "Group",
+				"type":   "select",
+				"use":    []interface{}{"sub-a", "sub-b"},
 				"filter": "Node 1",
 			},
 		},
@@ -195,6 +195,46 @@ proxies:
 	}
 }
 
+func TestExpandProxyProvidersCustomNamePrefix(t *testing.T) {
+	providerYAML := `
+proxies:
+  - name: "Node 1"
+    type: ss
+    server: 1.1.1.1
+    port: 8388
+`
+	config := map[string]interface{}{
+		"proxies": []interface{}{
+			map[string]interface{}{"name": "Node 1", "type": "ss", "server": "0.0.0.0", "port": 8388},
+		},
+		"proxy-providers": map[string]interface{}{
+			"sub-a": map[string]interface{}{"type": "http", "url": "https://a.com"},
+		},
+		"proxy-groups": []interface{}{
+			map[string]interface{}{"name": "Group", "type": "select", "use": []interface{}{"sub-a"}},
+		},
+	}
+
+	fetcher := &mockFetcher{responses: map[string][]byte{"https://a.com": []byte(providerYAML)}}
+	if _, err := ExpandProxyProviders(config, ExpandOptions{
+		Fetcher: fetcher,
+		NamePrefix: func(providerName, proxyName string) string {
+			return providerName + " - " + proxyName
+		},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	proxies := ToMapSlice(config["proxies"])
+	if got := proxies[1]["name"]; got != "sub-a - Node 1" {
+		t.Fatalf("proxy 1 name = %q, want 'sub-a - Node 1'", got)
+	}
+	members := ToStringSlice(ToMapSlice(config["proxy-groups"])[0]["proxies"])
+	if len(members) != 1 || members[0] != "sub-a - Node 1" {
+		t.Fatalf("group members = %#v, want ['sub-a - Node 1']", members)
+	}
+}
+
 func TestExpandProxyProvidersEmptyFallback(t *testing.T) {
 	providerYAML := `
 proxies:
@@ -212,9 +252,9 @@ proxies:
 		},
 		"proxy-groups": []interface{}{
 			map[string]interface{}{
-				"name": "HK Group",
-				"type": "select",
-				"use":  []interface{}{"sub-a"},
+				"name":   "HK Group",
+				"type":   "select",
+				"use":    []interface{}{"sub-a"},
 				"filter": "HK", // Does not match US 01
 			},
 		},
@@ -260,9 +300,9 @@ proxies:
 	config := map[string]interface{}{
 		"proxy-providers": map[string]interface{}{
 			"sub-a": map[string]interface{}{
-				"type": "http",
-				"url":  "https://a.com",
-				"filter": "HK",
+				"type":           "http",
+				"url":            "https://a.com",
+				"filter":         "HK",
 				"exclude-filter": "Expired",
 			},
 		},

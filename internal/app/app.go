@@ -47,6 +47,7 @@ type Result struct {
 // Service owns converter registration and shared conversion behavior.
 type Service struct {
 	registry map[string]converter.Converter
+	fetcher  clash.ProviderFetcher
 }
 
 // NewService returns a service with all built-in converters registered.
@@ -54,9 +55,10 @@ func NewService() *Service {
 	return NewServiceWithFetcher(nil)
 }
 
-// NewServiceWithFetcher returns a service with custom fetcher for clash converter.
+// NewServiceWithFetcher returns a service with a custom fetcher used whenever
+// proxy-providers are fetched (expansion or the clash target).
 func NewServiceWithFetcher(fetcher clash.ProviderFetcher) *Service {
-	return &Service{registry: map[string]converter.Converter{
+	return &Service{fetcher: fetcher, registry: map[string]converter.Converter{
 		"loon":    loon.New(),
 		"clash":   clashoutput.NewWithFetcher(fetcher),
 		"egern":   egern.New(),
@@ -66,14 +68,42 @@ func NewServiceWithFetcher(fetcher clash.ProviderFetcher) *Service {
 	}}
 }
 
-// SetClashFetcher updates the fetcher used by the clash and sing-box converters.
+// SetClashFetcher updates the fetcher used for provider expansion, the clash
+// converter and the sing-box converter.
 func (s *Service) SetClashFetcher(fetcher clash.ProviderFetcher) {
+	s.fetcher = fetcher
 	if conv, ok := s.registry["clash"].(*clashoutput.Converter); ok {
 		conv.Fetcher = fetcher
 	}
 	if conv, ok := s.registry["singbox"].(*singbox.Converter); ok {
 		conv.Fetcher = fetcher
 	}
+}
+
+// expandProxyProviders inlines proxy-providers before conversion. Targets such
+// as Loon, Egern and Quantumult X cannot consume Clash-only subscription
+// payloads, so expanding them into static nodes is the only portable option.
+func (s *Service) expandProxyProviders(target string, config map[string]interface{}, root *yaml.Node, options converter.Options) ([]string, error) {
+	if !options.ExpandProxyProviders {
+		return nil, nil
+	}
+	fetcher := s.fetcher
+	if fetcher == nil {
+		fetcher = clash.NewDefaultFetcher(nil, options.BasePath)
+	}
+	expandOptions := clash.ExpandOptions{
+		Fetcher:  fetcher,
+		BasePath: options.BasePath,
+		RootNode: root,
+	}
+	// Loon treats a leading "[" as a section header, so use a plain prefix
+	// there instead of the Clash-style "[provider] name".
+	if strings.EqualFold(target, "loon") {
+		expandOptions.NamePrefix = func(providerName, proxyName string) string {
+			return providerName + " - " + proxyName
+		}
+	}
+	return clash.ExpandProxyProviders(config, expandOptions)
 }
 
 // ConvertBytesFrom converts a supported source format to a target format.
@@ -169,9 +199,14 @@ func (s *Service) ConvertBytesWithOptions(target string, data []byte, options co
 	var rootNode yaml.Node
 	_ = yaml.Unmarshal(data, &rootNode)
 
+	expandWarnings, err := s.expandProxyProviders(target, config, &rootNode, options)
+	if err != nil {
+		return Result{}, fmt.Errorf("%w: %v", ErrConvertFailed, err)
+	}
+	warnings = append(warnings, expandWarnings...)
+
 	var content []byte
 	var convertWarnings []string
-	var err error
 	if optConv, ok := conv.(converter.OptionConverter); ok {
 		content, convertWarnings, err = optConv.ConvertWithOptions(config, &rootNode, options)
 	} else {

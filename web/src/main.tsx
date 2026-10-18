@@ -63,7 +63,7 @@ function App() {
     if (target === "qx" && qxFinalProxyChain) {
       link.searchParams.set("qx_final_proxy_chain", "1")
     }
-    if (target === "clash" && expandProxyProviders) {
+    if (expandProxyProviders) {
       link.searchParams.set("expand_proxy_providers", "1")
     }
     return link.toString()
@@ -100,7 +100,7 @@ function App() {
         if (target === "qx" && qxFinalProxyChain) {
           form.set("qx_final_proxy_chain", "1")
         }
-        if (target === "clash" && expandProxyProviders) {
+        if (expandProxyProviders) {
           form.set("expand_proxy_providers", "1")
         }
         form.set("file", file)
@@ -115,7 +115,7 @@ function App() {
             yaml: mode === "yaml" ? yaml : undefined,
             url: mode === "url" ? url.trim() : undefined,
             qxFinalProxyChain: target === "qx" && qxFinalProxyChain,
-            expandProxyProviders: target === "clash" && expandProxyProviders,
+            expandProxyProviders: expandProxyProviders,
           }),
         })
       }
@@ -213,7 +213,7 @@ function App() {
                   </span>
                 </label>
               )}
-              {target === "clash" && (
+              {target !== "" && (
                 <label className="flex items-start gap-3 rounded-md border bg-muted/25 p-3 text-sm">
                   <input
                     type="checkbox"
@@ -223,7 +223,7 @@ function App() {
                   />
                   <span className="grid gap-1">
                     <span className="font-medium">展开 Proxy Provider 节点</span>
-                    <span className="text-muted-foreground">将 proxy-providers 中的节点展开并固定到 proxies 与 proxy-groups，移除 use 语法。</span>
+                    <span className="text-muted-foreground">将 proxy-providers 中的节点抓取并固定到 proxies 与 proxy-groups，移除 use 语法。适用于只提供 Clash 订阅的服务商（例如转换到 Loon 时避免远程订阅无法解析）。</span>
                   </span>
                 </label>
               )}
