@@ -307,6 +307,50 @@ func TestSubscribeCachesSuccessfulConversion(t *testing.T) {
 	}
 }
 
+func TestSubscribeRetriesAfterProviderFailure(t *testing.T) {
+	providerRequests := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerRequests++
+		if providerRequests == 1 {
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, "proxies:\n  - {name: RecoveredNode, type: ss, server: example.com, port: 8388}\n")
+	}))
+	defer provider.Close()
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "proxy-providers:\n  bbb:\n    type: http\n    url: "+provider.URL+"\nproxy-groups:\n  - {name: All, type: select, use: [bbb]}\n")
+	}))
+	defer remote.Close()
+	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
+	defer ts.Close()
+	endpoint := ts.URL + "/api/subscribe?target=clash&expand_proxy_providers=1&url=" + urlQueryEscape(remote.URL)
+	for i, wantCache := range []string{"MISS", "MISS", "HIT"} {
+		resp, err := http.Get(endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK || resp.Header.Get("X-Clash-Nexus-Cache") != wantCache {
+			t.Fatalf("request %d: status=%d cache=%q, want 200 %s", i, resp.StatusCode, resp.Header.Get("X-Clash-Nexus-Cache"), wantCache)
+		}
+		warnings, err := strconv.Atoi(resp.Header.Get("X-Clash-Nexus-Warning-Count"))
+		if err != nil || (i == 0 && warnings == 0) || (i > 0 && warnings != 0) {
+			t.Fatalf("request %d: unexpected warning count %q", i, resp.Header.Get("X-Clash-Nexus-Warning-Count"))
+		}
+		if strings.Contains(string(body), "RecoveredNode") != (i > 0) {
+			t.Fatalf("request %d: recovered node presence does not match provider state", i)
+		}
+	}
+	if providerRequests != 2 {
+		t.Fatalf("provider requests = %d, want 2", providerRequests)
+	}
+}
+
 func TestConvertFile(t *testing.T) {
 	ts := httptest.NewServer(NewServer(app.NewService()).Handler())
 	defer ts.Close()
@@ -455,8 +499,8 @@ proxy-groups:
 `
 	// Without expand
 	respNoExpand := postJSON(t, ts.URL+"/api/convert", map[string]interface{}{
-		"target": "clash",
-		"yaml":   config,
+		"target":               "clash",
+		"yaml":                 config,
 		"expandProxyProviders": false,
 	})
 	bodyNoExpand := readConvertBody(t, respNoExpand)
@@ -466,8 +510,8 @@ proxy-groups:
 
 	// With expand
 	respExpand := postJSON(t, ts.URL+"/api/convert", map[string]interface{}{
-		"target": "clash",
-		"yaml":   config,
+		"target":               "clash",
+		"yaml":                 config,
 		"expandProxyProviders": true,
 	})
 	bodyExpand := readConvertBody(t, respExpand)
@@ -532,4 +576,3 @@ proxy-groups:
 		t.Fatalf("expected SubNode in expanded: %s", expandedData)
 	}
 }
-
