@@ -129,17 +129,14 @@ func (b *builder) addHostsServer(hosts map[string]interface{}) (string, []interf
 		if host == "" {
 			continue
 		}
-		switch v := value.(type) {
-		case []interface{}:
-			values := make([]string, 0, len(v))
-			for _, item := range v {
-				values = append(values, fmt.Sprintf("%v", item))
-			}
+		values := b.hostsValues(host, value)
+		if len(values) == 0 {
+			continue
+		}
+		if len(values) == 1 {
+			predefined[host] = values[0]
+		} else {
 			predefined[host] = values
-		case []string:
-			predefined[host] = v
-		default:
-			predefined[host] = fmt.Sprintf("%v", v)
 		}
 		domains = append(domains, host)
 	}
@@ -163,6 +160,37 @@ func (b *builder) addHostsServer(hosts map[string]interface{}) (string, []interf
 		})
 	}
 	return tag, rules
+}
+
+// hostsValues keeps only IP addresses. Clash hosts may map a domain to another
+// domain, but sing-box's hosts server only accepts netip.Addr values.
+func (b *builder) hostsValues(host string, value interface{}) []string {
+	var raw []string
+	switch v := value.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if item == nil {
+				continue
+			}
+			raw = append(raw, strings.TrimSpace(fmt.Sprintf("%v", item)))
+		}
+	case []string:
+		raw = v
+	default:
+		raw = []string{strings.TrimSpace(fmt.Sprintf("%v", value))}
+	}
+	values := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if item == "" {
+			continue
+		}
+		if net.ParseIP(strings.Trim(item, "[]")) == nil {
+			b.warnf("hosts entry %q: value %q is not an IP address; sing-box hosts only supports IPs, value skipped", host, item)
+			continue
+		}
+		values = append(values, item)
+	}
+	return values
 }
 
 // addDNSServer parses a Clash nameserver string and appends a type-based

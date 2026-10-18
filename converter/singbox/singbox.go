@@ -941,6 +941,9 @@ func toStringSlice(v interface{}) []string {
 	case []interface{}:
 		out := make([]string, 0, len(value))
 		for _, item := range value {
+			if item == nil {
+				continue
+			}
 			out = append(out, fmt.Sprintf("%v", item))
 		}
 		return out

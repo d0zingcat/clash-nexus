@@ -490,6 +490,54 @@ func TestConvertLogicalAndWildcardRules(t *testing.T) {
 	}
 }
 
+func TestConvertSkipsNonIPHostsValues(t *testing.T) {
+	input := map[string]interface{}{
+		"hosts": map[string]interface{}{
+			"alias.example": "target.example",
+			"router.lan":    "192.168.1.1",
+		},
+	}
+	out, warnings, err := New().Convert(input, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+	if !containsWarning(warnings, `hosts entry "alias.example"`) {
+		t.Fatalf("warnings = %v, want non-IP hosts warning", warnings)
+	}
+	config := decodeJSON(t, out)
+	servers := config["dns"].(map[string]interface{})["servers"].([]interface{})
+	var hostsServer map[string]interface{}
+	for _, value := range servers {
+		server := value.(map[string]interface{})
+		if server["type"] == "hosts" {
+			hostsServer = server
+		}
+	}
+	if hostsServer == nil {
+		t.Fatalf("missing hosts server: %#v", servers)
+	}
+	predefined := hostsServer["predefined"].(map[string]interface{})
+	if _, exists := predefined["alias.example"]; exists {
+		t.Fatalf("non-IP host must be skipped: %#v", predefined)
+	}
+	if predefined["router.lan"] != "192.168.1.1" {
+		t.Fatalf("IP host = %#v", predefined["router.lan"])
+	}
+}
+
+func TestConvertSkipsNilRuleEntries(t *testing.T) {
+	input := map[string]interface{}{
+		"rules": []interface{}{nil, "MATCH,DIRECT"},
+	}
+	_, warnings, err := New().Convert(input, nil)
+	if err != nil {
+		t.Fatalf("Convert() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+}
+
 func TestConvertFakeIPDisabledByCatchAllFilter(t *testing.T) {
 	input := map[string]interface{}{
 		"dns": map[string]interface{}{
