@@ -207,3 +207,24 @@ func TestConvertFilters_FinalViaInterfaceCanBeDisabled(t *testing.T) {
 		t.Errorf("expected final rule, got:\n%s", localText)
 	}
 }
+
+func TestConvertGeneralEmitsQUICDropOnlyForQUICBlockRule(t *testing.T) {
+	withRule := convertGeneral(map[string]interface{}{
+		"rules": []interface{}{
+			"AND,((NETWORK,UDP),(DST-PORT,443)),REJECT",
+		},
+	})
+	if !strings.Contains(withRule, "udp_drop_list = QUIC") {
+		t.Fatalf("convertGeneral() missing udp_drop_list for QUIC block rule:\n%s", withRule)
+	}
+
+	withoutRule := convertGeneral(map[string]interface{}{
+		"rules": []interface{}{
+			"DOMAIN-SUFFIX,example.com,DIRECT",
+			"MATCH,DIRECT",
+		},
+	})
+	if strings.Contains(withoutRule, "udp_drop_list") {
+		t.Fatalf("convertGeneral() emitted udp_drop_list without a QUIC block rule:\n%s", withoutRule)
+	}
+}
