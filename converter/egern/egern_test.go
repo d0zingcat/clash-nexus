@@ -1,11 +1,92 @@
 package egern
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+func TestConvertHealthCheckTimeoutUsesSeconds(t *testing.T) {
+	for _, groupType := range []string{"url-test", "fallback"} {
+		for _, membership := range []string{"static", "provider", "mixed"} {
+			for _, tc := range []struct{ milliseconds, seconds int }{
+				{5000, 5}, {1500, 2}, {1, 1}, {60000, 60}, {120000, 60}, {0, 0}, {-1, 0},
+			} {
+				t.Run(fmt.Sprintf("%s/%s/%d", groupType, membership, tc.milliseconds), func(t *testing.T) {
+					group := map[string]interface{}{
+						"name": "Health check", "type": groupType, "timeout": tc.milliseconds,
+						"interval": 300, "tolerance": 100,
+					}
+					if membership != "provider" {
+						group["proxies"] = []interface{}{"DIRECT"}
+					}
+					if membership != "static" {
+						group["use"] = []interface{}{"provider-a"}
+					}
+					config := map[string]interface{}{
+						"proxy-groups": []interface{}{group},
+					}
+					if membership != "static" {
+						config["proxy-providers"] = map[string]interface{}{
+							"provider-a": map[string]interface{}{"url": "https://example.com/sub"},
+						}
+					}
+					content, warnings, err := New().Convert(config, nil)
+					if err != nil || len(warnings) != 0 {
+						t.Fatalf("Convert() error = %v, warnings = %v", err, warnings)
+					}
+					var got map[string]interface{}
+					if err := yaml.Unmarshal(content, &got); err != nil {
+						t.Fatal(err)
+					}
+					groups := got["policy_groups"].([]interface{})
+					wantGroups := 1
+					if membership == "mixed" {
+						wantGroups = 2
+					}
+					if len(groups) != wantGroups {
+						t.Fatalf("got %d groups, want %d", len(groups), wantGroups)
+					}
+					for _, raw := range groups {
+						for _, rawConfig := range raw.(map[string]interface{}) {
+							cfg := rawConfig.(map[string]interface{})
+							if tc.seconds == 0 {
+								if _, ok := cfg["timeout"]; ok {
+									t.Fatalf("nonpositive timeout should be omitted: %#v", cfg)
+								}
+							} else if cfg["timeout"] != tc.seconds {
+								t.Fatalf("timeout = %v, want %d seconds", cfg["timeout"], tc.seconds)
+							}
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestConvertEmptyGroupUsesBuiltinDIRECT(t *testing.T) {
+	config := map[string]interface{}{
+		"proxy-groups": []interface{}{
+			map[string]interface{}{"name": "Empty", "type": "select"},
+		},
+	}
+	content, warnings, err := New().Convert(config, nil)
+	if err != nil || len(warnings) != 1 {
+		t.Fatalf("Convert() error = %v, warnings = %v", err, warnings)
+	}
+	var got map[string]interface{}
+	if err := yaml.Unmarshal(content, &got); err != nil {
+		t.Fatal(err)
+	}
+	group := got["policy_groups"].([]interface{})[0].(map[string]interface{})["select"].(map[string]interface{})
+	policies := group["policies"].([]interface{})
+	if len(policies) != 1 || policies[0] != "DIRECT" {
+		t.Fatalf("empty group policies = %#v, want [DIRECT]", policies)
+	}
+}
 
 func TestConvertMixedPortDoesNotReuseSocksPort(t *testing.T) {
 	config := map[string]interface{}{

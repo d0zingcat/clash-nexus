@@ -792,7 +792,7 @@ func buildEgernPolicyGroups(
 		filter := clash.MapGetStr(g, "filter", "")
 		interval := clash.MapGetInt(g, "interval", 0)
 		tolerance := clash.MapGetInt(g, "tolerance", 0)
-		timeout := clash.MapGetInt(g, "timeout", 0)
+		timeout := egernTimeoutSeconds(clash.MapGetInt(g, "timeout", 0))
 
 		kept := make([]string, 0, len(proxiesList))
 		for _, proxyName := range proxiesList {
@@ -855,6 +855,15 @@ func buildEgernPolicyGroups(
 					if subFilter != "" {
 						subExt["filter"] = subFilter
 					}
+					if interval > 0 && (egernType == "auto_test" || egernType == "fallback") {
+						subExt["interval"] = interval
+					}
+					if tolerance > 0 && egernType == "auto_test" {
+						subExt["tolerance"] = tolerance
+					}
+					if timeout > 0 {
+						subExt["timeout"] = timeout
+					}
 					if updateInterval := providerInterval(u); updateInterval > 0 {
 						subExt["update_interval"] = updateInterval
 					}
@@ -867,7 +876,7 @@ func buildEgernPolicyGroups(
 			policies := append(proxiesList, subGroupNames...)
 			if len(policies) == 0 {
 				*warnings = append(*warnings, fmt.Sprintf("policy group %q has no usable members; falling back to direct", name))
-				policies = []string{"direct"}
+				policies = []string{"DIRECT"}
 			}
 			grp := buildEgernGroupEntry(egernType, name, policies, interval, tolerance, timeout, filter)
 			out = append(out, grp)
@@ -876,7 +885,7 @@ func buildEgernPolicyGroups(
 			// Pure proxies group
 			if len(proxiesList) == 0 {
 				*warnings = append(*warnings, fmt.Sprintf("policy group %q has no usable members; falling back to direct", name))
-				proxiesList = []string{"direct"}
+				proxiesList = []string{"DIRECT"}
 			}
 			grp := buildEgernGroupEntry(egernType, name, proxiesList, interval, tolerance, timeout, filter)
 			out = append(out, grp)
@@ -915,6 +924,18 @@ func buildEgernPolicyGroups(
 	}
 
 	return out
+}
+
+// Clash health-check timeouts are milliseconds; Egern accepts whole seconds,
+// up to 60. Round up so sub-second values do not disable the timeout.
+func egernTimeoutSeconds(milliseconds int) int {
+	if milliseconds <= 0 {
+		return 0
+	}
+	if milliseconds >= 60000 {
+		return 60
+	}
+	return (milliseconds + 999) / 1000
 }
 
 func clashGroupTypeToEgern(gtype string) string {
