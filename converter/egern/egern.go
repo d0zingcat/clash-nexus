@@ -3,6 +3,7 @@ package egern
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -94,7 +95,7 @@ func buildEgernConfig(config map[string]interface{}, root *yaml.Node, warnings *
 	out["hijack_dns"] = []string{"*"}
 
 	// DNS
-	if egernDNS := buildEgernDNS(config); egernDNS != nil {
+	if egernDNS := buildEgernDNS(config, root, warnings); egernDNS != nil {
 		out["dns"] = egernDNS
 	}
 
@@ -142,7 +143,7 @@ func buildEgernConfig(config map[string]interface{}, root *yaml.Node, warnings *
 // DNS
 // ---------------------------------------------------------------------------
 
-func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
+func buildEgernDNS(config map[string]interface{}, root *yaml.Node, warnings *[]string) map[string]interface{} {
 	dnsCfg, _ := clash.MapGet[map[string]interface{}](config, "dns")
 
 	hostsMap, _ := config["hosts"].(map[string]interface{})
@@ -182,6 +183,10 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 		dohServers := []string{}
 		dotServers := []string{}
 		doqServers := []string{}
+		doh3Servers := []string{}
+		if servers := clash.ToStringSlice(dnsCfg["proxy-server-nameserver"]); len(servers) > 0 {
+			addWarning(warnings, "dns.proxy-server-nameserver resolves proxy endpoints in Clash; Egern proxy_nameservers controls proxy DNS queries and requires manual configuration")
+		}
 
 		allNameservers := append(
 			clash.ToStringSlice(dnsCfg["nameserver"]),
@@ -195,6 +200,8 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 			}
 			seenNS[ns] = true
 			switch {
+			case strings.HasPrefix(ns, "h3://"):
+				doh3Servers = append(doh3Servers, ns)
 			case strings.HasPrefix(ns, "https://"):
 				dohServers = append(dohServers, ns)
 			case strings.HasPrefix(ns, "tls://"):
@@ -219,13 +226,15 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 		if len(doqServers) > 0 {
 			upstreams["doq"] = doqServers
 		}
-		if len(upstreams) > 0 {
-			out["upstreams"] = upstreams
+		if len(doh3Servers) > 0 {
+			upstreams["doh3"] = doh3Servers
 		}
 
-		// Determine catch-all upstream name (prefer DoH > DoQ > DoT > default)
+		// Determine catch-all upstream name (prefer DoH3 > DoH > DoQ > DoT > default)
 		catchAll := ""
 		switch {
+		case len(doh3Servers) > 0:
+			catchAll = "doh3"
 		case len(dohServers) > 0:
 			catchAll = "doh"
 		case len(doqServers) > 0:
@@ -240,34 +249,25 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 		forward := []map[string]interface{}{}
 
 		if nsPolicy != nil {
-			for pattern, dnsServerRaw := range nsPolicy {
+			for _, pattern := range orderedEgernDNSPatterns(root, nsPolicy) {
+				dnsServerRaw := nsPolicy[pattern]
 				pattern = strings.TrimSpace(pattern)
 				// Determine Egern forward target. Egern accepts either an upstream
 				// group name or a DNS server address directly.
 				var targetUpstream string
-				var serverStr string
-				switch v := dnsServerRaw.(type) {
-				case []interface{}:
-					if len(v) > 0 {
-						serverStr = strings.TrimSpace(fmt.Sprintf("%v", v[0]))
-					}
-				default:
-					serverStr = strings.TrimSpace(fmt.Sprintf("%v", v))
-				}
-				serverStr = strings.Trim(serverStr, `'"`)
-				if serverStr == "system" || serverStr == "" {
-					targetUpstream = "bootstrap"
-				} else {
-					targetUpstream = serverStr
-				}
-
 				// Convert Clash pattern to Egern forward rule type
 				if strings.HasPrefix(pattern, "geosite:") {
-					// Not directly supported; emit as comment via a note
-					forward = append(forward, map[string]interface{}{
-						"_note": fmt.Sprintf("# [WARNING] pattern not supported in Egern: %s", pattern),
-					})
+					addWarning(warnings, "skipping DNS policy %q: Egern has no geosite matcher", pattern)
 					continue
+				}
+				servers := egernDNSServers(dnsServerRaw)
+				if len(servers) == 0 {
+					continue
+				}
+				targetUpstream = servers[0]
+				if len(servers) > 1 {
+					targetUpstream = fmt.Sprintf("policy_%d", len(forward)+1)
+					upstreams[targetUpstream] = servers
 				}
 				if strings.HasPrefix(pattern, "rule-set:") {
 					ruleSet := strings.TrimSpace(strings.TrimPrefix(pattern, "rule-set:"))
@@ -276,10 +276,15 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 							rawURL := clash.MapGetStr(cfg, "url", "")
 							if converted, ok := convertRuleProviderURL(rawURL); ok {
 								ruleSet = converted
-							} else if rawURL != "" {
-								ruleSet = rawURL
+							} else {
+								addWarning(warnings, "skipping DNS rule-set %q: provider format cannot be converted to Egern", ruleSet)
+								continue
 							}
 						}
+					}
+					if !strings.HasPrefix(ruleSet, "https://") && !strings.HasPrefix(ruleSet, "http://") {
+						addWarning(warnings, "skipping DNS rule-set %q: no compatible remote provider", ruleSet)
+						continue
 					}
 					forward = append(forward, map[string]interface{}{
 						"proxy_rule_set": map[string]interface{}{
@@ -332,16 +337,10 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 		}
 
 		if len(forward) > 0 {
-			// Filter out _note entries (comments aren't valid YAML map entries in practice)
-			cleanForward := make([]map[string]interface{}, 0, len(forward))
-			for _, f := range forward {
-				if _, isNote := f["_note"]; !isNote {
-					cleanForward = append(cleanForward, f)
-				}
-			}
-			if len(cleanForward) > 0 {
-				out["forward"] = cleanForward
-			}
+			out["forward"] = forward
+		}
+		if len(upstreams) > 0 {
+			out["upstreams"] = upstreams
 		}
 	}
 
@@ -356,6 +355,42 @@ func buildEgernDNS(config map[string]interface{}) map[string]interface{} {
 	return out
 }
 
+func egernDNSServers(raw interface{}) []string {
+	servers := clash.ToStringSlice(raw)
+	if server, ok := raw.(string); ok {
+		servers = []string{server}
+	}
+	out := make([]string, 0, len(servers))
+	for _, server := range servers {
+		if server = strings.Trim(strings.TrimSpace(server), `'"`); server != "" {
+			out = append(out, server)
+		}
+	}
+	return out
+}
+
+func orderedEgernDNSPatterns(root *yaml.Node, policies map[string]interface{}) []string {
+	if root != nil {
+		node := root
+		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+			node = node.Content[0]
+		}
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == "dns" {
+				if keys := clash.OrderedKeysFromNode(node.Content[i+1], "nameserver-policy"); len(keys) > 0 {
+					return keys
+				}
+			}
+		}
+	}
+	keys := make([]string, 0, len(policies))
+	for key := range policies {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // ---------------------------------------------------------------------------
 // Proxies
 // ---------------------------------------------------------------------------
@@ -364,6 +399,19 @@ func buildEgernProxies(proxies []map[string]interface{}, warnings *[]string) []m
 	out := make([]map[string]interface{}, 0, len(proxies))
 	for _, p := range proxies {
 		ptype := strings.ToLower(clash.MapGetStr(p, "type", ""))
+		if ptype == "vmess" || ptype == "vless" {
+			network := clash.MapGetStr(p, "network", "tcp")
+			if network == "grpc" && !clash.MapGetBool(p, "tls", false) && len(clash.MapGetMap(p, "reality-opts")) == 0 {
+				addWarning(warnings, "skipping proxy %q: Egern gRPC requires TLS or REALITY; plaintext gRPC cannot be preserved", p["name"])
+				continue
+			}
+			switch network {
+			case "", "tcp", "ws", "h2", "http", "grpc":
+			default:
+				addWarning(warnings, "skipping proxy %q: Egern does not support transport %q", p["name"], network)
+				continue
+			}
+		}
 		var entry map[string]interface{}
 		switch ptype {
 		case "ss":
@@ -376,6 +424,16 @@ func buildEgernProxies(proxies []map[string]interface{}, warnings *[]string) []m
 			entry = convertVlessToEgern(p)
 		case "hysteria2":
 			entry = convertHysteria2ToEgern(p)
+		case "anytls":
+			entry = convertAnyTLSToEgern(p)
+		case "tuic":
+			entry = convertTUICToEgern(p, warnings)
+		case "wireguard":
+			entry = convertWireGuardToEgern(p, warnings)
+		case "snell":
+			entry = convertSnellToEgern(p, warnings)
+		case "ssh":
+			entry = convertSSHToEgern(p, warnings)
 		case "socks5":
 			entry = convertSocks5ToEgern(p)
 		case "http":
@@ -386,6 +444,7 @@ func buildEgernProxies(proxies []map[string]interface{}, warnings *[]string) []m
 			continue
 		}
 		if entry != nil {
+			applyEgernProxyOptions(p, entry)
 			// Handle dialer-proxy → prev_hop
 			if dialer := clash.MapGetStr(p, "dialer-proxy", ""); dialer != "" {
 				for _, v := range entry {
@@ -440,9 +499,6 @@ func convertSSToEgern(p map[string]interface{}) map[string]interface{} {
 		}
 		if host := clash.MapGetStr(pluginOpts, "host", ""); host != "" {
 			stls["sni"] = host
-		}
-		if ver := clash.MapGetInt(pluginOpts, "version", 3); ver > 0 {
-			stls["version"] = ver
 		}
 		if len(stls) > 0 {
 			ss["shadow_tls"] = stls
@@ -577,7 +633,18 @@ func buildVmessVlessTransport(network string, tls bool, sni string, skipVerify b
 		}
 
 	case "grpc":
-		// gRPC not directly supported in Egern; fall through to nil
+		grpc := map[string]interface{}{}
+		if service := clash.MapGetStr(grpcOpts, "grpc-service-name", ""); service != "" {
+			grpc["service_name"] = service
+		}
+		if sni != "" {
+			grpc["sni"] = sni
+		}
+		grpc["skip_tls_verify"] = skipVerify
+		if hasReality {
+			grpc["reality"] = egernReality(realityOpts)
+		}
+		return map[string]interface{}{"grpc": grpc}
 	}
 	return nil
 }
@@ -611,8 +678,10 @@ func convertVmessToEgern(p map[string]interface{}) map[string]interface{} {
 
 	wsOpts, _ := clash.MapGet[map[string]interface{}](p, "ws-opts")
 	httpOpts, _ := clash.MapGet[map[string]interface{}](p, "http-opts")
+	grpcOpts := clash.MapGetMap(p, "grpc-opts")
+	realityOpts := clash.MapGetMap(p, "reality-opts")
 
-	if t := buildVmessVlessTransport(network, tls, sni, skipVerify, wsOpts, httpOpts, nil, nil, false); t != nil {
+	if t := buildVmessVlessTransport(network, tls || len(realityOpts) > 0, sni, skipVerify, wsOpts, httpOpts, grpcOpts, realityOpts, len(realityOpts) > 0); t != nil {
 		vm["transport"] = t
 	}
 	return map[string]interface{}{"vmess": vm}
@@ -645,8 +714,10 @@ func convertVlessToEgern(p map[string]interface{}) map[string]interface{} {
 
 	realityOpts, hasReality := clash.MapGet[map[string]interface{}](p, "reality-opts")
 	wsOpts, _ := clash.MapGet[map[string]interface{}](p, "ws-opts")
+	httpOpts := clash.MapGetMap(p, "http-opts")
+	grpcOpts := clash.MapGetMap(p, "grpc-opts")
 
-	if t := buildVmessVlessTransport(network, tls || hasReality, sni, skipVerify, wsOpts, nil, nil, realityOpts, hasReality); t != nil {
+	if t := buildVmessVlessTransport(network, tls || hasReality, sni, skipVerify, wsOpts, httpOpts, grpcOpts, realityOpts, hasReality); t != nil {
 		vl["transport"] = t
 	}
 	return map[string]interface{}{"vless": vl}
@@ -692,6 +763,10 @@ func convertSocks5ToEgern(p map[string]interface{}) map[string]interface{} {
 	}
 	if clash.MapGetBool(p, "tfo", false) {
 		s5["tfo"] = true
+	}
+	if clash.MapGetBool(p, "tls", false) {
+		applyEgernTLS(p, s5)
+		return map[string]interface{}{"socks5_tls": s5}
 	}
 	return map[string]interface{}{"socks5": s5}
 }
@@ -838,47 +913,33 @@ func buildEgernPolicyGroups(
 					break
 				}
 			}
-			out = append(out, map[string]interface{}{"external": ext})
+			if len(urls) == 0 {
+				addWarning(warnings, "policy group %q has no usable provider URLs; falling back to DIRECT", name)
+				out = append(out, buildEgernGroupEntry(egernType, name, []string{"DIRECT"}, interval, tolerance, timeout, ""))
+			} else {
+				out = append(out, map[string]interface{}{"external": ext})
+			}
 
 		} else if len(usesList) > 0 && len(proxiesList) > 0 {
-			// Mixed: create helper external sub-groups for providers, then main group
-			subGroupNames := make([]string, 0, len(usesList))
+			// Modern Egern supports subscriptions and static members in one group.
+			// This keeps every node in the same selection/health-check pool.
+			grp := buildEgernGroupEntry(egernType, name, proxiesList, interval, tolerance, timeout, filter)
+			cfg := grp[egernType].(map[string]interface{})
+			urls := []string{}
 			for _, u := range usesList {
 				if url := providerURL(u); url != "" {
-					subName := name + "_" + u
-					subFilter := filter
-					subExt := map[string]interface{}{
-						"name": subName,
-						"type": egernType,
-						"urls": []string{url},
+					urls = append(urls, url)
+					if _, exists := cfg["update_interval"]; !exists {
+						if updateInterval := providerInterval(u); updateInterval > 0 {
+							cfg["update_interval"] = updateInterval
+						}
 					}
-					if subFilter != "" {
-						subExt["filter"] = subFilter
-					}
-					if interval > 0 && (egernType == "auto_test" || egernType == "fallback") {
-						subExt["interval"] = interval
-					}
-					if tolerance > 0 && egernType == "auto_test" {
-						subExt["tolerance"] = tolerance
-					}
-					if timeout > 0 {
-						subExt["timeout"] = timeout
-					}
-					if updateInterval := providerInterval(u); updateInterval > 0 {
-						subExt["update_interval"] = updateInterval
-					}
-					out = append(out, map[string]interface{}{"external": subExt})
-					subGroupNames = append(subGroupNames, subName)
 					consumedProviders[u] = true
 				}
 			}
-			// Main group with proxy names + sub-group names
-			policies := append(proxiesList, subGroupNames...)
-			if len(policies) == 0 {
-				*warnings = append(*warnings, fmt.Sprintf("policy group %q has no usable members; falling back to direct", name))
-				policies = []string{"DIRECT"}
+			if len(urls) > 0 {
+				cfg["urls"] = urls
 			}
-			grp := buildEgernGroupEntry(egernType, name, policies, interval, tolerance, timeout, filter)
 			out = append(out, grp)
 
 		} else {
@@ -889,6 +950,25 @@ func buildEgernPolicyGroups(
 			}
 			grp := buildEgernGroupEntry(egernType, name, proxiesList, interval, tolerance, timeout, filter)
 			out = append(out, grp)
+		}
+		// These fields apply to both native groups and legacy external groups.
+		for _, raw := range out[len(out)-1] {
+			cfg := raw.(map[string]interface{})
+			for source, target := range map[string]string{"url": "latency_test_url", "icon": "icon", "hidden": "hidden"} {
+				if value, ok := g[source]; ok {
+					cfg[target] = value
+				}
+			}
+			if egernType == "load_balance" {
+				switch clash.MapGetStr(g, "strategy", "consistent-hashing") {
+				case "round-robin":
+					cfg["algorithm"] = "round_robin"
+				case "consistent-hashing":
+					cfg["algorithm"] = "hash"
+				default:
+					addWarning(warnings, "policy group %q: Egern does not support load-balance strategy %q; using hash", name, g["strategy"])
+				}
+			}
 		}
 	}
 
@@ -1022,7 +1102,11 @@ func buildEgernRules(
 
 		ruleType := strings.ToUpper(strings.TrimSpace(strings.SplitN(ruleStr, ",", 2)[0]))
 		if ruleType == "AND" || ruleType == "OR" || ruleType == "NOT" {
-			addWarning(warnings, "dropping unsupported rule %q: Egern does not support logical rules (AND/OR/NOT)", ruleStr)
+			if entry := convertEgernLogicalRule(ruleStr, true, providerURLs); entry != nil {
+				out = append(out, entry)
+			} else {
+				addWarning(warnings, "dropping logical rule %q: malformed or contains unsupported conditions", ruleStr)
+			}
 			continue
 		}
 
@@ -1049,6 +1133,8 @@ func buildEgernRules(
 		entry := convertRuleToEgern(ruleType, match, policy, noResolve, providerURLs)
 		if entry != nil {
 			out = append(out, entry)
+		} else if ruleType != "RULE-SET" {
+			addWarning(warnings, "skipping unsupported Egern rule %q", ruleStr)
 		}
 	}
 
@@ -1060,6 +1146,9 @@ func convertRuleToEgern(ruleType, match, policy string, noResolve bool, provider
 		m := map[string]interface{}{
 			"match":  match,
 			"policy": policy,
+		}
+		if noResolve && (egernType == "ip_cidr" || egernType == "ip_cidr6" || egernType == "asn") {
+			m["no_resolve"] = true
 		}
 		for _, e := range extra {
 			for k, v := range e {
@@ -1099,11 +1188,14 @@ func convertRuleToEgern(ruleType, match, policy string, noResolve bool, provider
 		return inner("asn")
 	case "URL-REGEX":
 		return inner("url_regex")
+	case "USER-AGENT":
+		return inner("user_agent")
 	case "DST-PORT", "DEST-PORT":
 		return inner("dest_port")
 	case "SRC-PORT":
-		return inner("dest_port") // approximate mapping
+		return nil // Egern has no source-port matcher; never substitute a destination port.
 	case "NETWORK":
+		match = strings.ToLower(match)
 		return inner("protocol")
 	case "PROCESS-NAME":
 		// Not supported in Egern; skip

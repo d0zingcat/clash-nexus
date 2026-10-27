@@ -226,13 +226,17 @@ Web 页面、`/api/convert` 和 `/api/subscribe` 同样支持该选项：JSON �
 |-------|-------|------|
 | trojan | trojan | ✅ |
 | ss | shadowsocks | ✅ |
-| vmess | vmess | ✅，支持 ws/wss/h2/http/tls/reality transport |
-| vless | vless | ✅，支持 ws/wss/h2/http/tls/reality transport |
+| vmess | vmess | ✅，支持 ws/wss/h2/http/tls/reality/grpc transport |
+| vless | vless | ✅，支持 ws/wss/h2/http/tls/reality/grpc transport |
 | hysteria2 | hysteria2 | ✅ |
-| socks5 | socks5 | ✅ |
-| http | http | ✅ |
+| anytls | anytls | ✅，显式保留 Clash 的证书校验行为 |
+| tuic | tuic | ✅，v5 UUID/password；v4 token 不支持 |
+| wireguard | wireguard | ✅，单 peer 简写；多 peer、受限 allowed-ips、AmneziaWG 跳过并警告 |
+| snell | snell | ✅，v1–v4，http/tls 混淆；v5 和其他混淆跳过并警告 |
+| ssh | ssh | ✅，密码或未加密的内联私钥，保留 host-key；私钥路径和口令不支持 |
+| socks5 | socks5 / socks5_tls | ✅，保留 TLS |
+| http | http / https | ✅，保留自定义 headers |
 | **ssr** | — | ❌ **不支持**，转换时输出 `[WARNING]` 并跳过 |
-| tuic / wireguard 等 | — | ❌ **不支持**，转换时输出 `[WARNING]` 并跳过 |
 
 > 跳过的节点会在 stderr 输出警告，例如：
 > ```
@@ -245,18 +249,25 @@ Web 页面、`/api/convert` 和 `/api/subscribe` 同样支持该选项：JSON �
 |-------|-------|------|
 | `proxies` | `proxies` | 本地节点 |
 | `proxy-providers` (use 引用) | `policy_groups[].external` | 外部订阅策略组 |
+| `proxy-groups` (同时含 proxies/use) | 原生策略组的 `policies` + `urls` | 静态节点与订阅节点进入同一个选择池，不再生成辅助订阅组 |
 | `proxy-groups` (select) | `policy_groups[].select` | 手动选择策略组 |
 | `proxy-groups` (url-test) | `policy_groups[].auto_test` | 自动测速策略组 |
 | `proxy-groups` (load-balance) | `policy_groups[].load_balance` | 负载均衡策略组 |
+| `strategy: round-robin / consistent-hashing` | `algorithm: round_robin / hash` | 负载均衡算法；其他算法警告并回退 hash |
+| 策略组 `url` / `icon` / `hidden` | `latency_test_url` / `icon` / `hidden` | 健康检查地址和显示设置 |
 | `dialer-proxy` | `prev_hop` | 节点上的代理链字段 |
 | `mixed-port` | `http_port` | Egern 无混合端口；不会同时写入 `socks_port` |
 | `port` / `socks-port` | `http_port` / `socks_port` | 仅在 Clash 明确分开配置时分别映射 |
 | `rules` | `rules` | 路由规则 |
 | `rule-providers` (RULE-SET) | `rules[].rule_set` | 规则集，blackmatrix7 的 Clash URL 自动转为 Surge URL |
 | `MATCH`/`FINAL` | `rules[].default` | 默认策略 |
+| `AND`/`OR`/`NOT` | `and`/`or`/`not` | 支持嵌套；任一条件不支持时跳过整条并警告 |
+| IP 规则 `no-resolve` | `no_resolve` | GEOIP、IP-CIDR、IP-CIDR6、IP-ASN |
 | `dns.default-nameserver` | `dns.bootstrap` | 用于解析 DoH 域名的 UDP DNS |
 | `dns.nameserver` | `dns.upstreams.default` | 默认 DNS 上游 |
 | `dns.fallback` (DoH/DoT/DoQ) | `dns.upstreams.doh/dot/doq` | 加密 DNS 上游 |
+| `h3://` DNS | `dns.upstreams.doh3` | DoH3 上游 |
+| `dns.nameserver-policy` | `dns.forward` | 保留声明顺序、system 和多服务器列表；列表生成专用 upstream |
 | `dns.fake-ip-filter` | `real_ip_domains` | Real IP 域名（`*` 被过滤，`+.` 转为 `*.`） |
 | `hosts` | `dns.hosts` | 静态域名映射 |
 
@@ -294,9 +305,14 @@ blackmatrix7 仓库没有 `rule/Egern` 目录。Egern 官方 FAQ 说明目前支
 
 **Egern：**
 - SSR 节点：Egern 不支持，转换时跳过并输出 stderr 警告
-- tuic、wireguard 等协议：同上
+- gRPC 需要 TLS 或 REALITY；明文 gRPC 跳过并警告
+- `smart` / `conditional` 是 Egern 原生策略，未自动替换 Clash 的选择算法
+- `dns.proxy-server-nameserver` 与 Egern `proxy_nameservers` 的文档语义不等价，警告并交由用户配置
+- `geosite:` DNS 匹配、源端口和进程匹配没有对应转换，跳过并警告
 - 非 blackmatrix7 的 Clash 格式远程规则集：需自行确认 Egern 是否支持，必要时替换为 Surge 规则集
 - Clash 的 `tun`、`sniffer` 段（Egern 侧自行配置）
+
+2026-10-27 官方文档核对与适配范围见 [Egern 文档审计](docs/fixes/2026-10-27-egern-current-docs.md)。
 
 **Stash：**
 - 移除 Mihomo 的入站、`tun`、`sniffer` 配置
