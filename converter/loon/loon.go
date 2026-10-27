@@ -47,6 +47,27 @@ func convertGeneral(config map[string]interface{}) string {
 		"skip-proxy = 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,localhost,*.local,e.crashlynatics.com",
 		"bypass-tun = 10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.0.0.0/24,192.0.2.0/24,192.88.99.0/24,192.168.0.0/16,198.18.0.0/15,198.51.100.0/24,203.0.113.0/24,224.0.0.0/4,255.255.255.255/32",
 	)
+	// include-tun is additive in Loon; route-address is not an equivalent
+	// replacement for the platform's full routing table.
+	tun := clash.MapGetMap(config, "tun")
+	if clash.MapGetBool(tun, "enable", false) {
+		include := []string{}
+		seen := map[string]bool{}
+		for _, value := range clash.ToStringSlice(tun["route-address"]) {
+			ip, network, err := net.ParseCIDR(value)
+			if err != nil || ip.To4() == nil {
+				lines = append(lines, "# [WARNING] Loon include-tun requires IPv4 CIDR; skipping "+value)
+				continue
+			}
+			if cidr := network.String(); !seen[cidr] {
+				seen[cidr] = true
+				include = append(include, cidr)
+			}
+		}
+		if len(include) > 0 {
+			lines = append(lines, "# [NOTE] include-tun adds routes to Loon defaults; it does not replace them", "include-tun = "+strings.Join(include, ","))
+		}
+	}
 
 	dnsCfg, _ := clash.MapGet[map[string]interface{}](config, "dns")
 
@@ -171,7 +192,7 @@ func convertGeneral(config map[string]interface{}) string {
 		"proxy-test-url = http://www.gstatic.com/generate_204",
 		"internet-test-url = http://wifi.vivo.com.cn/generate_204",
 		"test-timeout = 5",
-		"resource-parser = https://raw.githubusercontent.com/sub-store-org/Sub-Store/release/sub-store-parser.loon.min.js",
+		"resource-parser = https://github.com/sub-store-org/Sub-Store/releases/latest/download/sub-store-parser.loon.min.js",
 	)
 
 	// real-ip from fake-ip-filter
@@ -283,7 +304,7 @@ func convertSS(p map[string]interface{}) string {
 		}
 	}
 
-	parts = append(parts, "fast-open="+clash.BoolStr(clash.MapGetBool(p, "fast-open", false)))
+	parts = append(parts, "fast-open="+clash.BoolStr(clash.MapGetBool(p, "tfo", clash.MapGetBool(p, "fast-open", false))))
 	parts = append(parts, "udp="+clash.BoolStr(clash.MapGetBool(p, "udp", true)))
 	return strings.Join(parts, ",")
 }
@@ -329,7 +350,7 @@ func convertVmess(p map[string]interface{}) string {
 		}
 	}
 
-	tls := clash.MapGetBool(p, "tls", false)
+	tls := clash.MapGetBool(p, "tls", false) || len(clash.MapGetMap(p, "reality-opts")) > 0
 	parts = append(parts, "over-tls="+clash.BoolStr(tls))
 	if tls {
 		sni := clash.MapGetStr(p, "servername", "")
@@ -394,7 +415,7 @@ func convertVless(p map[string]interface{}) string {
 		appendHTTPTransportOpts(&parts, p)
 	}
 
-	tls := clash.MapGetBool(p, "tls", false)
+	tls := clash.MapGetBool(p, "tls", false) || hasReality
 	parts = append(parts, "over-tls="+clash.BoolStr(tls))
 	if tls || hasReality {
 		sni := clash.MapGetStr(p, "servername", "")
@@ -426,6 +447,18 @@ func convertHysteria2(p map[string]interface{}) string {
 	if sni := clash.MapGetStr(p, "sni", ""); sni != "" {
 		parts = append(parts, "sni="+sni)
 	}
+	if clash.MapGetStr(p, "obfs", "") == "salamander" {
+		parts = append(parts, "salamander-password="+loonQuote(clash.MapGetStr(p, "obfs-password", "")))
+	}
+	if ports := clash.MapGetStr(p, "ports", ""); ports != "" {
+		parts = append(parts, "server-ports="+loonQuote(strings.ReplaceAll(ports, "-", ":")))
+	}
+	if interval := clash.MapGetInt(p, "hop-interval", 0); interval > 0 {
+		parts = append(parts, fmt.Sprintf("hop-interval=%d", interval))
+	}
+	if bandwidth, ok := loonBandwidthMbps(p["down"]); ok {
+		parts = append(parts, "download-bandwidth="+bandwidth)
+	}
 	parts = append(parts, "udp="+clash.BoolStr(clash.MapGetBool(p, "udp", true)))
 	return strings.Join(parts, ",")
 }
@@ -448,7 +481,7 @@ func convertSSR(p map[string]interface{}) string {
 	if op := clash.MapGetStr(p, "obfs-param", ""); op != "" {
 		parts = append(parts, "obfs-param="+op)
 	}
-	parts = append(parts, "fast-open="+clash.BoolStr(clash.MapGetBool(p, "fast-open", false)))
+	parts = append(parts, "fast-open="+clash.BoolStr(clash.MapGetBool(p, "tfo", clash.MapGetBool(p, "fast-open", false))))
 	parts = append(parts, "udp="+clash.BoolStr(clash.MapGetBool(p, "udp", true)))
 	return strings.Join(parts, ",")
 }
@@ -470,6 +503,7 @@ func convertSocks5(p map[string]interface{}) string {
 	}
 
 	if clash.MapGetBool(p, "tls", false) {
+		parts = append(parts, "over-tls=true")
 		if clash.MapGetBool(p, "skip-cert-verify", false) {
 			parts = append(parts, "skip-cert-verify=true")
 		}
@@ -523,34 +557,55 @@ func convertWireGuard(p map[string]interface{}) string {
 	parts := []string{fmt.Sprintf(`%s = WireGuard,interface-ip=%s,private-key="%s"`,
 		name, firstString(p["ip"]), privateKey)}
 	if ipv6 := firstString(p["ipv6"]); ipv6 != "" {
-		parts = append(parts, "interface-ipV6="+ipv6)
+		parts = append(parts, "interface-ipv6="+ipv6)
 	}
 	if mtu := clash.MapGetInt(p, "mtu", 0); mtu > 0 {
 		parts = append(parts, fmt.Sprintf("mtu=%d", mtu))
 	}
-	if dns := firstString(p["dns"]); dns != "" {
-		parts = append(parts, "dns="+dns)
+	seenDNS4, seenDNS6 := false, false
+	for _, dns := range clash.ToStringSlice(p["dns"]) {
+		ip := net.ParseIP(dns)
+		if ip == nil {
+			continue
+		}
+		if ip.To4() != nil && !seenDNS4 {
+			parts = append(parts, "dns="+dns)
+			seenDNS4 = true
+		} else if ip.To4() == nil && !seenDNS6 {
+			parts = append(parts, "dnsv6="+dns)
+			seenDNS6 = true
+		}
 	}
-	if keepalive := clash.MapGetInt(p, "keepalive", 0); keepalive > 0 {
-		parts = append(parts, fmt.Sprintf("keeyalive=%d", keepalive))
+	if keepalive := clash.MapGetInt(p, "persistent-keepalive", clash.MapGetInt(p, "keepalive", -1)); keepalive >= 0 {
+		parts = append(parts, fmt.Sprintf("keepalive=%d", keepalive))
 	}
 
-	peer := []string{fmt.Sprintf(`public-key="%s"`, publicKey)}
-	if psk := clash.MapGetStr(p, "pre-shared-key", ""); psk != "" {
-		peer = append(peer, fmt.Sprintf(`preshared-key="%s"`, psk))
+	peers := clash.ToMapSlice(p["peers"])
+	if len(peers) == 0 {
+		peers = []map[string]interface{}{p}
 	}
-	if reserved := wireGuardReserved(p["reserved"]); reserved != "" {
-		peer = append(peer, "reserved="+reserved)
+	peerEntries := []string{}
+	for _, peerCfg := range peers {
+		peer := []string{"public-key=" + loonQuote(clash.MapGetStr(peerCfg, "public-key", publicKey))}
+		if psk := clash.MapGetStr(peerCfg, "pre-shared-key", ""); psk != "" {
+			peer = append(peer, "preshared-key="+loonQuote(psk))
+		}
+		if reserved := wireGuardReserved(peerCfg["reserved"]); reserved != "" {
+			peer = append(peer, "reserved="+reserved)
+		}
+		allowedIPs := strings.Join(clash.ToStringSlice(peerCfg["allowed-ips"]), ",")
+		if allowedIPs == "" {
+			allowedIPs = "0.0.0.0/0"
+		}
+		peer = append(peer, "allowed-ips="+loonQuote(allowedIPs))
+		peerServer := clash.MapGetStr(peerCfg, "server", server)
+		peerPort := clash.MapGetInt(peerCfg, "port", port)
+		if peerServer != "" && peerPort > 0 {
+			peer = append(peer, "endpoint="+net.JoinHostPort(peerServer, fmt.Sprint(peerPort)))
+		}
+		peerEntries = append(peerEntries, "{"+strings.Join(peer, ",")+"}")
 	}
-	if allowedIPs := strings.Join(clash.ToStringSlice(p["allowed-ips"]), ","); allowedIPs != "" {
-		peer = append(peer, fmt.Sprintf(`allowed-ips="%s"`, allowedIPs))
-	} else {
-		peer = append(peer, `allowed-ips="0.0.0.0/0"`)
-	}
-	if server != "" && port > 0 {
-		peer = append(peer, fmt.Sprintf("endpoint=%s:%d", server, port))
-	}
-	parts = append(parts, "peers=[{"+strings.Join(peer, ",")+"}]")
+	parts = append(parts, "peers=["+strings.Join(peerEntries, ",")+"]")
 	parts = append(parts, "udp="+clash.BoolStr(clash.MapGetBool(p, "udp", true)))
 	return strings.Join(parts, ",")
 }
@@ -588,6 +643,9 @@ func convertAnyTLS(p map[string]interface{}) string {
 			parts = append(parts, "short-id="+shortID)
 		}
 	}
+	if timeout := clash.MapGetInt(p, "idle-session-timeout", 0); timeout > 0 {
+		parts = append(parts, fmt.Sprintf("idle-session-timeout=%d", timeout))
+	}
 	parts = append(parts, "udp="+clash.BoolStr(clash.MapGetBool(p, "udp", true)))
 	return strings.Join(parts, ",")
 }
@@ -599,7 +657,7 @@ func convertAnyTLS(p map[string]interface{}) string {
 func loonTLSProfile(fingerprint string) string {
 	switch strings.ToLower(strings.TrimSpace(fingerprint)) {
 	case "chrome", "chrome147":
-		return "chrome"
+		return strings.ToLower(strings.TrimSpace(fingerprint))
 	case "safari-ios18", "ios":
 		return "safari-ios18"
 	case "safari-ios-26":
@@ -672,6 +730,9 @@ func wireGuardReserved(v interface{}) string {
 		if strings.HasPrefix(x, "[") {
 			return x
 		}
+		if decoded, err := base64.StdEncoding.DecodeString(x); err == nil && len(decoded) == 3 {
+			return fmt.Sprintf("[%d,%d,%d]", decoded[0], decoded[1], decoded[2])
+		}
 		return "[" + x + "]"
 	}
 	if len(items) == 0 {
@@ -695,13 +756,20 @@ var proxyConverters = map[string]proxyConverter{
 	"anytls":    convertAnyTLS,
 }
 
-func convertProxies(proxies []map[string]interface{}) (string, map[string]bool) {
+func convertProxies(proxies []map[string]interface{}, serverDNS []string) (string, map[string]bool, []string) {
 	lines := []string{"[Proxy]"}
+	warnings := []string{}
 	available := make(map[string]bool, len(proxies))
 	for _, p := range proxies {
 		ptype := strings.ToLower(clash.MapGetStr(p, "type", ""))
 		if conv, ok := proxyConverters[ptype]; ok {
-			lines = append(lines, conv(p))
+			if reason := loonProxyUnsupportedReason(p); reason != "" {
+				warning := fmt.Sprintf("skipping proxy %q: %s", p["name"], reason)
+				warnings = append(warnings, warning)
+				lines = append(lines, "# [WARNING] "+warning)
+				continue
+			}
+			lines = append(lines, appendLoonNodeOptions(conv(p), p, serverDNS))
 			if name := clash.MapGetStr(p, "name", ""); name != "" {
 				available[name] = true
 			}
@@ -709,7 +777,7 @@ func convertProxies(proxies []map[string]interface{}) (string, map[string]bool) 
 			lines = append(lines, fmt.Sprintf("# [WARNING] Unsupported proxy type '%s': %s", ptype, clash.MapGetStr(p, "name", "?")))
 		}
 	}
-	return strings.Join(lines, "\n"), available
+	return strings.Join(lines, "\n"), available, warnings
 }
 
 // ---------------------------------------------------------------------------
@@ -742,6 +810,7 @@ func convertProxyChains(proxies []map[string]interface{}, available map[string]b
 var proxyURIPrefixes = []string{
 	"ss://", "ssr://", "vmess://", "vless://", "trojan://",
 	"hysteria://", "hysteria2://", "hy2://", "tuic://",
+	"anytls://",
 	"socks5://", "http://", "https://",
 }
 
@@ -767,6 +836,10 @@ func checkProxySubscription(rawURL string) string {
 		return fmt.Sprintf("failed to read subscription content: %v", err)
 	}
 
+	return validateSubscriptionContent(body)
+}
+
+func validateSubscriptionContent(body []byte) string {
 	content := strings.TrimSpace(string(body))
 
 	decoded, b64Err := base64.StdEncoding.DecodeString(content)
@@ -774,23 +847,12 @@ func checkProxySubscription(rawURL string) string {
 		decoded, b64Err = base64.RawStdEncoding.DecodeString(content)
 	}
 	if b64Err == nil {
-		lines := strings.Split(strings.TrimSpace(string(decoded)), "\n")
-		validCount := 0
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			for _, prefix := range proxyURIPrefixes {
-				if strings.HasPrefix(line, prefix) {
-					validCount++
-					break
-				}
-			}
-		}
-		if validCount > 0 {
+		if validLoonTextSubscription(string(decoded)) {
 			return ""
 		}
+	}
+	if validLoonTextSubscription(content) {
+		return ""
 	}
 
 	var yamlMap map[string]interface{}
@@ -806,10 +868,10 @@ func checkProxySubscription(rawURL string) string {
 		return "subscription YAML has no 'proxies' key; provide a standard proxy-only subscription instead"
 	}
 
-	return "subscription content is neither a valid base64 proxy URI list nor a proxies-only YAML"
+	return "subscription is not a supported Loon node/URI list, General/Host/Proxy subscription, or proxies-only YAML"
 }
 
-func convertRemoteProxy(providers map[string]interface{}, providerOrder []string) string {
+func convertRemoteProxy(providers map[string]interface{}, providerOrder []string, serverDNS []string) string {
 	lines := []string{"[Remote Proxy]"}
 	for _, alias := range providerOrder {
 		raw := providers[alias]
@@ -823,7 +885,11 @@ func convertRemoteProxy(providers map[string]interface{}, providerOrder []string
 				lines = append(lines, fmt.Sprintf("# [WARNING] %s: %s", alias, warn))
 			}
 		}
-		lines = append(lines, fmt.Sprintf("%s = %s,parser-enabled=true,udp=true,enabled=true", alias, rawURL))
+		line := fmt.Sprintf("%s = %s,parser-enabled=true,udp=true,enabled=true", alias, rawURL)
+		if len(serverDNS) > 0 {
+			line += ",server-dns=" + loonQuote(strings.Join(serverDNS, ","))
+		}
+		lines = append(lines, line)
 		if ef := clash.MapGetStr(cfg, "exclude-filter", ""); ef != "" {
 			lines = append(lines, fmt.Sprintf("# [NOTE] exclude-filter for %s: %s  (apply via Remote Filter if needed)", alias, ef))
 		}
@@ -938,15 +1004,16 @@ func convertProxyGroups(groups []map[string]interface{}, chainMap map[string]str
 			interval := clash.MapGetInt(g, "interval", 600)
 			strategy := clash.MapGetStr(g, "strategy", "consistent-hashing")
 			algoMap := map[string]string{
-				"consistent-hashing": "pcc",
+				"consistent-hashing": "PCC",
 				"round-robin":        "Round-Robin",
 			}
 			algo := algoMap[strategy]
 			if algo == "" {
-				algo = "pcc"
+				algo = "PCC"
 			}
-			lines = append(lines, fmt.Sprintf("%s = load-balance,%s,url = %s,interval = %d,algorithm = %s",
-				name, memberStr, url, interval, algo))
+			timeout := clash.MapGetInt(g, "timeout", 5000)
+			lines = append(lines, fmt.Sprintf("%s = load-balance,%s,url = %s,interval = %d,max-timeout = %d,algorithm = %s",
+				name, memberStr, url, interval, timeout, algo))
 
 		case "relay":
 			lines = append(lines, fmt.Sprintf("# [NOTE] relay group '%s' should be configured in [Proxy Chain] section", name))
@@ -990,7 +1057,7 @@ func convertRuleProviderURL(url string) string {
 }
 
 var unsupportedRuleTypes = map[string]bool{
-	"GEOSITE": true, "DOMAIN-REGEX": true, "DOMAIN-WILDCARD": true,
+	"GEOSITE": true, "DOMAIN-REGEX": true,
 	"IP-SUFFIX": true, "SRC-IP-SUFFIX": true, "SRC-GEOIP": true,
 	"SRC-IP-ASN": true, "SRC-IP-CIDR": true, "IN-PORT": true,
 	"IN-TYPE": true, "IN-USER": true, "IN-NAME": true,
@@ -1228,7 +1295,10 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 	sections = append(sections, convertGeneral(config))
 
 	proxies := clash.ToMapSlice(config["proxies"])
-	proxyText, available := convertProxies(proxies)
+	serverDNS, dnsWarnings := loonServerDNS(config)
+	warnings = append(warnings, dnsWarnings...)
+	proxyText, available, proxyWarnings := convertProxies(proxies, serverDNS)
+	warnings = append(warnings, proxyWarnings...)
 	sections = append(sections, proxyText)
 
 	proxyChainText, chainMap := convertProxyChains(proxies, available)
@@ -1242,7 +1312,7 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 	if len(providerOrder) == 0 {
 		providerOrder, _ = clash.ToOrderedMap(config["proxy-providers"])
 	}
-	sections = append(sections, convertRemoteProxy(providersMap, providerOrder))
+	sections = append(sections, convertRemoteProxy(providersMap, providerOrder, serverDNS))
 
 	groups := clash.ToMapSlice(config["proxy-groups"])
 	sections = append(sections, convertRemoteFilters(groups, providersMap))

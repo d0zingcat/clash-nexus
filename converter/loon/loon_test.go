@@ -210,7 +210,7 @@ func TestConvertWireGuard(t *testing.T) {
 		`private-key="private"`,
 		"mtu=1280",
 		"dns=1.1.1.1",
-		"keeyalive=45",
+		"keepalive=45",
 		`public-key="public"`,
 		`preshared-key="psk"`,
 		"reserved=[1,2,3]",
