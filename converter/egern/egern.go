@@ -370,6 +370,8 @@ func egernDNSServers(raw interface{}) []string {
 }
 
 func orderedEgernDNSPatterns(root *yaml.Node, policies map[string]interface{}) []string {
+	keys := make([]string, 0, len(policies))
+	seen := make(map[string]bool, len(policies))
 	if root != nil {
 		node := root
 		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
@@ -377,18 +379,26 @@ func orderedEgernDNSPatterns(root *yaml.Node, policies map[string]interface{}) [
 		}
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			if node.Content[i].Value == "dns" {
-				if keys := clash.OrderedKeysFromNode(node.Content[i+1], "nameserver-policy"); len(keys) > 0 {
-					return keys
+				for _, key := range clash.OrderedKeysFromNode(node.Content[i+1], "nameserver-policy") {
+					if _, exists := policies[key]; exists && !seen[key] {
+						keys = append(keys, key)
+						seen[key] = true
+					}
 				}
 			}
 		}
 	}
-	keys := make([]string, 0, len(policies))
+	// YAML merge keys are expanded in the decoded map, but are not literal
+	// keys in the source node. Keep explicit entries first, then append all
+	// inherited entries in deterministic order instead of dropping them.
+	missing := make([]string, 0, len(policies)-len(keys))
 	for key := range policies {
-		keys = append(keys, key)
+		if !seen[key] {
+			missing = append(missing, key)
+		}
 	}
-	sort.Strings(keys)
-	return keys
+	sort.Strings(missing)
+	return append(keys, missing...)
 }
 
 // ---------------------------------------------------------------------------

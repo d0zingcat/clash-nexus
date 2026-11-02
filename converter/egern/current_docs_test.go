@@ -250,3 +250,34 @@ func TestMissingProviderUsesValidFallbackGroup(t *testing.T) {
 		t.Fatalf("group = %#v", group)
 	}
 }
+
+func TestDNSMergedPoliciesRetainInheritedDomains(t *testing.T) {
+	got, warnings := convertDocument(t, `
+defaults: &defaults
+  inherited.example.com: 1.1.1.1
+  overridden.example.com: 8.8.8.8
+secondary: &secondary
+  another.example.com: 9.9.9.9
+dns:
+  nameserver: ["https://default.example.com/dns-query"]
+  nameserver-policy:
+    <<: [*defaults, *secondary]
+    explicit.example.com: system
+    overridden.example.com: 223.5.5.5
+`)
+	if len(warnings) != 0 {
+		t.Fatal(warnings)
+	}
+	forward := got["dns"].(map[string]interface{})["forward"].([]interface{})
+	if len(forward) != 5 {
+		t.Fatalf("forward = %#v, want four domain rules and catch-all", forward)
+	}
+	wantNames := []string{"explicit.example.com", "overridden.example.com", "another.example.com", "inherited.example.com"}
+	wantServers := []string{"system", "223.5.5.5", "9.9.9.9", "1.1.1.1"}
+	for i, name := range wantNames {
+		rule := forward[i].(map[string]interface{})["domain"].(map[string]interface{})
+		if rule["match"] != name || rule["value"] != wantServers[i] {
+			t.Fatalf("forward[%d] = %#v", i, rule)
+		}
+	}
+}
