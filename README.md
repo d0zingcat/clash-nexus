@@ -140,6 +140,8 @@ Web 页面、`/api/convert` 和 `/api/subscribe` 同样支持该选项：JSON �
 | wireguard | WireGuard |
 | anytls | AnyTLS |
 
+目标为最新 Loon 文档：节点及订阅 `server-dns` 需要 3.5.2 (996)+，`include-tun` 需要 Build 1007+，`DOMAIN-WILDCARD` 需要 Build 1008+。
+
 ### 配置段落映射
 
 | Clash | Loon | 说明 |
@@ -153,6 +155,9 @@ Web 页面、`/api/convert` 和 `/api/subscribe` 同样支持该选项：JSON �
 | `rule-providers` | `[Remote Rule]` | 远程规则订阅 |
 | `dns` | `[General]` dns-server/doh-server/doq-server/doh3-server | DNS 配置 |
 | `hosts` | `[Host]` | 域名映射 |
+| `dns.proxy-server-nameserver` | 节点及 `[Remote Proxy]` 的 `server-dns` | 单独用于节点域名解析，保留完整列表并加引号；DoT、路由附加选项及专用 policy 警告并留待手动配置 |
+| `tun.route-address` | `[General] include-tun` | 仅在 tun 启用时转换 IPv4 CIDR；添加到 Loon 默认路由，不能替换其默认路由表 |
+| `DOMAIN-WILDCARD` | `[Rule] DOMAIN-WILDCARD` | 保留 `*`、`?`、`[...]` |
 
 ### 自动处理
 
@@ -161,6 +166,13 @@ Web 页面、`/api/convert` 和 `/api/subscribe` 同样支持该选项：JSON �
 - `dialer-proxy` 节点自动生成 `[Proxy Chain]` 条目，策略组中的引用同步替换
 - `proxy-providers` 的 `filter` 正则自动转为 `[Remote Filter]` 的 `NameRegex`
 - 配置 SubStore 解析器以兼容各类订阅格式
+- 节点保留 IP 解析策略、证书 SHA-256 指纹、受支持的 TLS profile 和 TFO；SOCKS5 TLS 显式写入 `over-tls=true`
+- Hysteria2 保留 Salamander 密码、跳端口、固定跳转间隔、ALPN 和下载带宽（换算为 Mbps）；AnyTLS 保留 idle-session-timeout
+- WireGuard 保留多个 peer、Base64 reserved、IPv6 endpoint、双栈 DNS 和 `persistent-keepalive`，使用最新文档的 `keepalive` 字段
+- 订阅检查接受原生 Loon 节点、URI，以及带 `[General]` / `[Host]` / `[Proxy]` 的订阅文件（含整体 Base64 编码）
+- Loon 未文档化的 gRPC/h2 等传输、实际不等价的 Trojan HTTP、Hysteria2 Gecko/Realm 和随机跳转间隔会跳过并警告
+
+2026-10-27 的来源、版本要求和边界见 [Loon 文档审计](docs/fixes/2026-10-27-loon-current-docs.md)。
 - 转换时自动拉取每个 `proxy-providers` 的订阅 URL，校验内容是否为**通用节点格式**（见下文注意事项）
 - 使用 `-expand-proxy-providers` 时，节点会被抓取并写入 `[Proxy]`，`[Remote Proxy]` 与 `[Remote Filter]` 留空，策略组直接引用静态节点
 
