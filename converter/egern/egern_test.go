@@ -43,9 +43,6 @@ func TestConvertHealthCheckTimeoutUsesSeconds(t *testing.T) {
 					}
 					groups := got["policy_groups"].([]interface{})
 					wantGroups := 1
-					if membership == "mixed" {
-						wantGroups = 2
-					}
 					if len(groups) != wantGroups {
 						t.Fatalf("got %d groups, want %d", len(groups), wantGroups)
 					}
@@ -182,7 +179,7 @@ func TestConvertDNSNameserverPolicyKeepsDedicatedServerAndRuleSet(t *testing.T) 
 			}
 		}
 		if proxyRuleSet, ok := rule["proxy_rule_set"].(map[string]interface{}); ok {
-			if proxyRuleSet["value"] == "bootstrap" && strings.Contains(proxyRuleSet["match"].(string), "/rule/Surge/Google/Google.list") {
+			if proxyRuleSet["value"] == "system" && strings.Contains(proxyRuleSet["match"].(string), "/rule/Surge/Google/Google.list") {
 				foundRuleSet = true
 			}
 		}
@@ -323,10 +320,10 @@ func TestConvertSkipsNonBlackmatrix7RuleProvidersWithWarning(t *testing.T) {
 	}
 }
 
-func TestConvertWarnsOnUnsupportedLogicalRules(t *testing.T) {
+func TestConvertWarnsOnUnsupportedLogicalConditions(t *testing.T) {
 	config := map[string]interface{}{
 		"rules": []interface{}{
-			"AND,((NETWORK,UDP),(DST-PORT,443)),REJECT",
+			"AND,((PROCESS-NAME,app),(DST-PORT,443)),REJECT",
 			"DOMAIN-SUFFIX,example.com,DIRECT",
 		},
 	}
@@ -338,7 +335,7 @@ func TestConvertWarnsOnUnsupportedLogicalRules(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("warnings = %#v, want one logical-rule warning", warnings)
 	}
-	if !containsAll(warnings[0], "logical rules", "AND") {
+	if !containsAll(warnings[0], "logical rule", "AND") {
 		t.Fatalf("warning = %q, want logical-rule context", warnings[0])
 	}
 
