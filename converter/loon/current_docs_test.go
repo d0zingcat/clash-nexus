@@ -183,3 +183,59 @@ func TestLoonBandwidthUnits(t *testing.T) {
 		}
 	}
 }
+
+func TestFixedStringHopIntervalsKeepNodeAndGroup(t *testing.T) {
+	for _, interval := range []string{"30", `"30"`, `" 30 "`} {
+		out, warnings := convertCurrentLoonDocument(t, `proxies:
+  - {name: HY2, type: hysteria2, server: example.com, port: 443, password: test, hop-interval: `+interval+`}
+proxy-groups:
+  - {name: Choose, type: select, proxies: [HY2]}
+`)
+		if len(warnings) != 0 || !strings.Contains(out, "hop-interval=30") || !strings.Contains(out, "Choose = select,HY2") {
+			t.Fatalf("interval %s: warnings=%v, output=%s", interval, warnings, out)
+		}
+	}
+	for _, interval := range []string{`"15-30"`, `"invalid"`, `"0"`, `"-1"`} {
+		out, warnings := convertCurrentLoonDocument(t, `proxies:
+  - {name: HY2, type: hysteria2, server: example.com, port: 443, password: test, hop-interval: `+interval+`}
+`)
+		if len(warnings) != 1 || strings.Contains(out, "HY2 = Hysteria2") {
+			t.Fatalf("interval %s: warnings=%v, output=%s", interval, warnings, out)
+		}
+	}
+}
+
+func TestSkippedDialersPruneTransitiveChainDependants(t *testing.T) {
+	out, warnings := convertCurrentLoonDocument(t, `proxies:
+  - {name: Outer, type: ss, server: example.com, port: 443, password: test, dialer-proxy: Inner}
+  - {name: Inner, type: ss, server: example.com, port: 443, password: test, dialer-proxy: GRPC}
+  - {name: GRPC, type: vless, network: grpc}
+  - {name: OK, type: ss, server: example.com, port: 443, password: test}
+proxy-groups:
+  - {name: Choose, type: select, proxies: [Outer, Inner, GRPC, OK]}
+`)
+	if !strings.Contains(out, "Choose = select,OK\n") || len(warnings) != 6 {
+		t.Fatalf("warnings=%v, output=%s", warnings, out)
+	}
+	for _, name := range []string{"Outer", "Inner", "GRPC"} {
+		if strings.Contains(out, "\n"+name+" =") || strings.Contains(out, name+" (Chain)") {
+			t.Fatalf("unusable chain member %s emitted:\n%s", name, out)
+		}
+	}
+}
+
+func TestValidNodeAndGroupDialersRemainAvailable(t *testing.T) {
+	out, warnings := convertCurrentLoonDocument(t, `proxies:
+  - {name: ViaNode, type: ss, server: example.com, port: 443, password: test, dialer-proxy: Base}
+  - {name: ViaGroup, type: ss, server: example.com, port: 443, password: test, dialer-proxy: Dialers}
+  - {name: Base, type: ss, server: example.com, port: 443, password: test}
+proxy-groups:
+  - {name: Dialers, type: select, proxies: [Base]}
+  - {name: Choose, type: select, proxies: [ViaNode, ViaGroup]}
+`)
+	for _, want := range []string{"ViaNode (Chain) = Base,ViaNode", "ViaGroup (Chain) = Dialers,ViaGroup", "Choose = select,ViaNode (Chain),ViaGroup (Chain)"} {
+		if len(warnings) != 0 || !strings.Contains(out, want) {
+			t.Fatalf("missing %s; warnings=%v, output=%s", want, warnings, out)
+		}
+	}
+}

@@ -453,7 +453,7 @@ func convertHysteria2(p map[string]interface{}) string {
 	if ports := clash.MapGetStr(p, "ports", ""); ports != "" {
 		parts = append(parts, "server-ports="+loonQuote(strings.ReplaceAll(ports, "-", ":")))
 	}
-	if interval := clash.MapGetInt(p, "hop-interval", 0); interval > 0 {
+	if interval := loonHopInterval(p); interval > 0 {
 		parts = append(parts, fmt.Sprintf("hop-interval=%d", interval))
 	}
 	if bandwidth, ok := loonBandwidthMbps(p["down"]); ok {
@@ -756,25 +756,52 @@ var proxyConverters = map[string]proxyConverter{
 	"anytls":    convertAnyTLS,
 }
 
-func convertProxies(proxies []map[string]interface{}, serverDNS []string) (string, map[string]bool, []string) {
+func convertProxies(proxies []map[string]interface{}, serverDNS []string, groups []map[string]interface{}) (string, map[string]bool, []string) {
 	lines := []string{"[Proxy]"}
 	warnings := []string{}
 	available := make(map[string]bool, len(proxies))
+	kept := []map[string]interface{}{}
 	for _, p := range proxies {
 		ptype := strings.ToLower(clash.MapGetStr(p, "type", ""))
-		if conv, ok := proxyConverters[ptype]; ok {
+		if _, ok := proxyConverters[ptype]; ok {
 			if reason := loonProxyUnsupportedReason(p); reason != "" {
 				warning := fmt.Sprintf("skipping proxy %q: %s", p["name"], reason)
 				warnings = append(warnings, warning)
 				lines = append(lines, "# [WARNING] "+warning)
 				continue
 			}
-			lines = append(lines, appendLoonNodeOptions(conv(p), p, serverDNS))
+			kept = append(kept, p)
 			if name := clash.MapGetStr(p, "name", ""); name != "" {
 				available[name] = true
 			}
 		} else {
 			lines = append(lines, fmt.Sprintf("# [WARNING] Unsupported proxy type '%s': %s", ptype, clash.MapGetStr(p, "name", "?")))
+		}
+	}
+	knownDialers := converter.BuiltinPolicies()
+	for name := range converter.ProxyGroupNames(groups) {
+		knownDialers[name] = true
+	}
+	// Remove dependants to a fixed point, including multi-hop dependencies.
+	// Retaining a destination without its dialer would silently bypass its chain.
+	for changed := true; changed; {
+		changed = false
+		for _, p := range kept {
+			name := clash.MapGetStr(p, "name", "")
+			dialer := clash.MapGetStr(p, "dialer-proxy", "")
+			if available[name] && dialer != "" && !available[dialer] && !knownDialers[dialer] {
+				delete(available, name)
+				warning := fmt.Sprintf("skipping proxy %q: dialer-proxy %q cannot be defined in Loon", name, dialer)
+				warnings = append(warnings, warning)
+				lines = append(lines, "# [WARNING] "+warning)
+				changed = true
+			}
+		}
+	}
+	for _, p := range kept {
+		if name := clash.MapGetStr(p, "name", ""); name == "" || available[name] {
+			conv := proxyConverters[strings.ToLower(clash.MapGetStr(p, "type", ""))]
+			lines = append(lines, appendLoonNodeOptions(conv(p), p, serverDNS))
 		}
 	}
 	return strings.Join(lines, "\n"), available, warnings
@@ -1297,7 +1324,8 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 	proxies := clash.ToMapSlice(config["proxies"])
 	serverDNS, dnsWarnings := loonServerDNS(config)
 	warnings = append(warnings, dnsWarnings...)
-	proxyText, available, proxyWarnings := convertProxies(proxies, serverDNS)
+	groups := clash.ToMapSlice(config["proxy-groups"])
+	proxyText, available, proxyWarnings := convertProxies(proxies, serverDNS, groups)
 	warnings = append(warnings, proxyWarnings...)
 	sections = append(sections, proxyText)
 
@@ -1314,7 +1342,6 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 	}
 	sections = append(sections, convertRemoteProxy(providersMap, providerOrder, serverDNS))
 
-	groups := clash.ToMapSlice(config["proxy-groups"])
 	sections = append(sections, convertRemoteFilters(groups, providersMap))
 
 	groupText, groupWarnings := convertProxyGroups(groups, chainMap, available)

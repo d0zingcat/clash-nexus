@@ -13,6 +13,17 @@ import (
 
 func loonQuote(value string) string { return strconv.Quote(value) }
 
+func loonHopInterval(p map[string]interface{}) int {
+	if value, ok := p["hop-interval"].(string); ok {
+		interval, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return -1
+		}
+		return interval
+	}
+	return clash.MapGetInt(p, "hop-interval", -1)
+}
+
 var loonBandwidthPattern = regexp.MustCompile(`(?i)^\s*(\d+(?:\.\d+)?)\s*(bps|kbps|mbps|gbps)?\s*$`)
 
 func loonBandwidthMbps(raw interface{}) (string, bool) {
@@ -138,8 +149,8 @@ func loonProxyUnsupportedReason(p map[string]interface{}) string {
 		if obfs := clash.MapGetStr(p, "obfs", ""); obfs != "" && obfs != "salamander" {
 			return "Loon only documents Hysteria2 salamander obfuscation"
 		}
-		if raw, ok := p["hop-interval"]; ok {
-			if interval := clash.MapGetInt(p, "hop-interval", -1); interval <= 0 || strings.Contains(fmt.Sprint(raw), "-") {
+		if _, ok := p["hop-interval"]; ok {
+			if loonHopInterval(p) <= 0 {
 				return "Loon cannot preserve a nonpositive or randomized Hysteria2 hop interval"
 			}
 		}
