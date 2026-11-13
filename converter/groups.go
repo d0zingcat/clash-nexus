@@ -2,6 +2,15 @@ package converter
 
 import "strings"
 
+// EmptyGroupPolicy blocks traffic if configured members were lost during
+// conversion. An originally empty group keeps the existing default.
+func EmptyGroupPolicy(hadMembers bool) string {
+	if hadMembers {
+		return "REJECT"
+	}
+	return "DIRECT"
+}
+
 // BuiltinPolicies returns the proxy names that always exist in target configs
 // and therefore never need to be defined as proxies.
 func BuiltinPolicies(extra ...string) map[string]bool {

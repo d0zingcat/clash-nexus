@@ -804,8 +804,9 @@ func convertPolicy(groups []map[string]interface{}, available map[string]bool) (
 		}
 
 		if len(members) == 0 && resourceTag == "" {
-			warnings = append(warnings, fmt.Sprintf("proxy group %q has no usable members; falling back to direct", name))
-			members = []string{"direct"}
+			fallback := strings.ToLower(converter.EmptyGroupPolicy(len(clash.ToStringSlice(g["proxies"])) > 0))
+			warnings = append(warnings, fmt.Sprintf("proxy group %q has no usable members; falling back to %s", name, fallback))
+			members = []string{fallback}
 		}
 
 		buildTokens := func(extra ...string) string {
@@ -1040,6 +1041,7 @@ func convert(config map[string]interface{}, root *yaml.Node, options converter.O
 	sections = append(sections, convertServerRemote(providersMap, providerOrder))
 
 	rules, _ := config["rules"].([]interface{})
+	rules = converter.RejectRemovedProxyRules(rules, proxies, groups, available, "Quantumult X", &allWarnings)
 	_, ruleProvidersMap := clash.ToOrderedMap(config["rule-providers"])
 	if ruleProvidersMap == nil {
 		ruleProvidersMap = map[string]interface{}{}

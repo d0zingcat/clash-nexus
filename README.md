@@ -120,11 +120,29 @@ curl -X POST http://127.0.0.1:8080/api/convert/file \
 展开不是把 Clash 节点原样照搬，而是先进入目标转换器，按目标格式重新生成节点定义：
 
 - Loon 写入 `[Proxy]` 行，Quantumult X 写入 `[server_local]`，Egern / Stash 写入各自的 YAML 结构
-- 目标不支持的节点类型或字段会被跳过并返回 warning，策略组中的失效引用同步移除；成员全部失效的组回退到 `DIRECT` / `direct`
+- 目标不支持的节点类型或字段会被跳过并返回 warning，策略组中的失效引用同步移除；原有成员全部失效的组使用 `REJECT` / `reject`，避免意外直连。直接引用已删除节点的规则也使用 `REJECT` 并返回 warning，保留匹配条件和规则顺序。
 - 字段名差异会按目标修正，例如 Stash 的 Hysteria2 使用 `auth`、`up-speed`、`down-speed`，转换时会从 Clash 的 `password`、`up`、`down` 自动映射
 - Loon 中节点重名时使用 `provider - name` 而不是 `[provider] name`，避免行首 `[` 被当成 section header
 
 Web 页面、`/api/convert` 和 `/api/subscribe` 同样支持该选项：JSON 字段 `expandProxyProviders`，或订阅参数 `expand_proxy_providers=1`。
+
+## Tailscale 转换
+
+| target | 行为 |
+| --- | --- |
+| `clash` | 原样保留节点字段与引用 |
+| `singbox` | 转为 sing-box 1.12+ 的 `endpoints`，不要求 `server` / `port`；映射登录、状态目录、子网路由、出口与拨号字段 |
+| `stash` | 保留官方支持的登录、设备名、控制面、出口、`auto-route-disabled`、`direct-peer-udp` 和 `dialer-proxy`；不支持的 Mihomo 字段删除并警告 |
+| `egern` | 按 Egern 源码编辑器导出结构生成 `tailscale` 节点；映射登录、设备名、控制面、指定出口与代理链，保留规则和策略组引用 |
+| `loon` / `qx` | 当前转换器跳过节点并警告，清理策略组引用；直接引用该节点的规则改为拒绝 |
+
+sing-box 的 endpoint 不支持 Mihomo 的 `udp: false` 开关，此时会提示差异。Mihomo 的 `exit-node: auto:any` 没有已核实的 sing-box 等价配置，节点会被跳过，引用它的规则拒绝流量；请指定出口名称或 IP。
+
+Stash 未设置 `exit-node` 时会自动选择可用出口，并默认自动接管 Tailnet 路由；这与 Mihomo 的行为不同，转换时会返回 warning。Stash 不接受此处的 Mihomo `state-dir`、`accept-routes`、`udp`、`ephemeral` 等字段。
+
+Egern 字段结构依据用户提供的 App 源码编辑器导出截图：`proxies: [{tailscale: {...}}]`。映射 `auth-key` → `auth_key`、`control-url` → `control_url`、`exit-node` → `exit_node`；有密钥时关闭 `interactive_login`，无密钥时启用交互登录。输出 `auto_add_magic_dns_rule: false`，由原有规则决定流量去向；IPv6/IPv4 优先映射为 `prefer_ipv6`，严格限制地址族则警告。`state` 的含义尚未确认，因此不会将 Mihomo 的 `state-dir` 写入该字段。`accept-routes`、`ephemeral`、`exit-node-allow-lan-access` 等未核实映射的字段省略并警告，`auto:any` 出口跳过节点并拒绝受影响流量。此结构尚未做 Egern 真机导入与连通性测试。
+
+依据：[Mihomo](https://wiki.metacubex.one/config/proxies/tailscale/)、[sing-box](https://sing-box.sagernet.org/configuration/endpoint/tailscale/)、[Stash](https://stash.wiki/en/proxy-protocols/proxy-types#tailscale)、[Egern 配置文档](https://egernapp.com/docs/configuration/proxies/)。
 
 ## Loon 转换
 

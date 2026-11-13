@@ -124,6 +124,7 @@ func buildEgernConfig(config map[string]interface{}, root *yaml.Node, warnings *
 
 	// Rules
 	rules, _ := config["rules"].([]interface{})
+	rules = converter.RejectRemovedProxyRules(rules, proxies, groups, egernProxyNames(egernProxies), "Egern", warnings)
 	ruleProviderOrder := clash.OrderedKeysFromNode(root, "rule-providers")
 	_, ruleProvidersMap := clash.ToOrderedMap(config["rule-providers"])
 	if ruleProvidersMap == nil {
@@ -448,13 +449,17 @@ func buildEgernProxies(proxies []map[string]interface{}, warnings *[]string) []m
 			entry = convertSocks5ToEgern(p)
 		case "http":
 			entry = convertHTTPToEgern(p)
+		case "tailscale":
+			entry = convertTailscaleToEgern(p, warnings)
 		default:
 			name := clash.MapGetStr(p, "name", "?")
-			addWarning(warnings, "skipping proxy %q (type: %s): not supported by Egern", name, ptype)
+			addWarning(warnings, "skipping proxy %q (type: %s): not supported by the Egern converter", name, ptype)
 			continue
 		}
 		if entry != nil {
-			applyEgernProxyOptions(p, entry)
+			if ptype != "tailscale" {
+				applyEgernProxyOptions(p, entry)
+			}
 			// Handle dialer-proxy → prev_hop
 			if dialer := clash.MapGetStr(p, "dialer-proxy", ""); dialer != "" {
 				for _, v := range entry {
@@ -955,8 +960,9 @@ func buildEgernPolicyGroups(
 		} else {
 			// Pure proxies group
 			if len(proxiesList) == 0 {
-				*warnings = append(*warnings, fmt.Sprintf("policy group %q has no usable members; falling back to direct", name))
-				proxiesList = []string{"DIRECT"}
+				fallback := converter.EmptyGroupPolicy(len(clash.ToStringSlice(g["proxies"])) > 0)
+				*warnings = append(*warnings, fmt.Sprintf("policy group %q has no usable members; falling back to %s", name, fallback))
+				proxiesList = []string{fallback}
 			}
 			grp := buildEgernGroupEntry(egernType, name, proxiesList, interval, tolerance, timeout, filter)
 			out = append(out, grp)
