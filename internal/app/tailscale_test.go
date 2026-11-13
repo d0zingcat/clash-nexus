@@ -72,14 +72,24 @@ func TestTailscaleAcrossTargets(t *testing.T) {
 				}
 				return
 			}
+			if target == "egern" {
+				var doc map[string]interface{}
+				if err := yaml.Unmarshal(result.Content, &doc); err != nil {
+					t.Fatal(err)
+				}
+				proxy := doc["proxies"].([]interface{})[0].(map[string]interface{})["tailscale"].(map[string]interface{})
+				if proxy["name"] != "Tailnet" || proxy["auth_key"] != "tskey-auth-example" || proxy["interactive_login"] != false || proxy["auto_add_magic_dns_rule"] != false {
+					t.Fatalf("incorrect Egern node: %#v", proxy)
+				}
+				if !strings.Contains(out, "policy: Tailnet\n") || strings.Contains(out, "policy: REJECT") {
+					t.Fatalf("lost routing: %s", out)
+				}
+				return
+			}
 			if !strings.Contains(strings.Join(result.Warnings, "\n"), "using REJECT") {
 				t.Fatalf("missing removed-policy warning: %v", result.Warnings)
 			}
 			switch target {
-			case "egern":
-				if strings.Contains(out, "policy: Tailnet\n") || !strings.Contains(out, "policy: REJECT") || !strings.Contains(out, "- REJECT") {
-					t.Fatalf("dangling rule or direct fallback: %s", out)
-				}
 			case "loon":
 				for _, want := range []string{"TailnetOnly = select,REJECT", "DOMAIN-SUFFIX,ts.net,REJECT", "IP-CIDR,100.64.0.0/10,REJECT,no-resolve"} {
 					if !strings.Contains(out, want) {

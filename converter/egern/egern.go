@@ -449,13 +449,17 @@ func buildEgernProxies(proxies []map[string]interface{}, warnings *[]string) []m
 			entry = convertSocks5ToEgern(p)
 		case "http":
 			entry = convertHTTPToEgern(p)
+		case "tailscale":
+			entry = convertTailscaleToEgern(p, warnings)
 		default:
 			name := clash.MapGetStr(p, "name", "?")
 			addWarning(warnings, "skipping proxy %q (type: %s): not supported by the Egern converter", name, ptype)
 			continue
 		}
 		if entry != nil {
-			applyEgernProxyOptions(p, entry)
+			if ptype != "tailscale" {
+				applyEgernProxyOptions(p, entry)
+			}
 			// Handle dialer-proxy → prev_hop
 			if dialer := clash.MapGetStr(p, "dialer-proxy", ""); dialer != "" {
 				for _, v := range entry {
