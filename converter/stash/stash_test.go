@@ -226,6 +226,9 @@ func TestConvertRebuildsProxiesUsingStashFieldWhitelist(t *testing.T) {
 				"hostname":                   "stash-phone",
 				"control-url":                "https://headscale.example.com",
 				"ephemeral":                  true,
+				"auto-route-disabled":        true,
+				"direct-peer-udp":            true,
+				"dialer-proxy":               "bootstrap",
 				"exit-node":                  "exit.example.ts.net",
 				"state-dir":                  "/var/lib/tailscale",
 				"accept-routes":              true,
@@ -286,12 +289,12 @@ func TestConvertRebuildsProxiesUsingStashFieldWhitelist(t *testing.T) {
 	if !ok {
 		t.Fatalf("tailnet proxy = %T %v, want mapping", proxies[0], proxies[0])
 	}
-	for _, field := range []string{"name", "type", "auth-key", "hostname", "control-url", "ephemeral", "exit-node"} {
+	for _, field := range []string{"name", "type", "auth-key", "hostname", "control-url", "exit-node", "auto-route-disabled", "direct-peer-udp", "dialer-proxy"} {
 		if _, exists := tailnet[field]; !exists {
 			t.Errorf("tailscale field %q must be retained", field)
 		}
 	}
-	for _, field := range []string{"state-dir", "accept-routes", "exit-node-allow-lan-access", "routing-mark", "ip-version"} {
+	for _, field := range []string{"ephemeral", "state-dir", "accept-routes", "exit-node-allow-lan-access", "routing-mark", "ip-version"} {
 		if _, exists := tailnet[field]; exists {
 			t.Errorf("tailscale field %q must be removed, got %v", field, tailnet[field])
 		}

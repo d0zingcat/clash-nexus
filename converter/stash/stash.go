@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"clash-nexus/converter"
+	"clash-nexus/converter/clash"
 )
 
 // Converter converts Clash YAML to Stash YAML format.
@@ -73,6 +74,9 @@ func buildConfig(config map[string]interface{}, warnings *[]string) map[string]i
 				out[key] = providers
 			}
 		case "rules":
+			if rules, ok := value.([]interface{}); ok {
+				value = converter.RejectRemovedProxyRules(rules, clash.ToMapSlice(config["proxies"]), clash.ToMapSlice(config["proxy-groups"]), proxyNames, "Stash", warnings)
+			}
 			if rules, ok := buildRules(value, warnings); ok {
 				out[key] = rules
 			}
@@ -168,8 +172,9 @@ func buildProxyGroups(value interface{}, warnings *[]string, proxyNames map[stri
 			_, hasUses := rebuilt["use"]
 			_, includeAll := rebuilt["include-all"]
 			if !hasUses && !includeAll {
-				*warnings = append(*warnings, fmt.Sprintf("proxy group %q has no usable members; falling back to DIRECT", groupName))
-				rebuilt["proxies"] = []interface{}{"DIRECT"}
+				fallback := converter.EmptyGroupPolicy(len(stringList(group["proxies"])) > 0)
+				*warnings = append(*warnings, fmt.Sprintf("proxy group %q has no usable members; falling back to %s", groupName, fallback))
+				rebuilt["proxies"] = []interface{}{fallback}
 			}
 		}
 		out = append(out, rebuilt)
@@ -394,6 +399,14 @@ func buildProxy(proxy map[string]interface{}, warnings *[]string) (map[string]in
 			"removed unsupported proxy field %q from %q (type %q)", key, name, proxyType,
 		))
 	}
+	if proxyType == "tailscale" {
+		if exit, _ := out["exit-node"].(string); strings.TrimSpace(exit) == "" {
+			*warnings = append(*warnings, fmt.Sprintf("Tailscale proxy %q: Stash automatically selects an exit node when exit-node is omitted; Mihomo does not", name))
+		}
+		if disabled, _ := out["auto-route-disabled"].(bool); !disabled {
+			*warnings = append(*warnings, fmt.Sprintf("Tailscale proxy %q: Stash automatically routes Tailnet traffic unless auto-route-disabled is true", name))
+		}
+	}
 	return out, true
 }
 
@@ -586,7 +599,8 @@ var stashProxyFields = map[string]map[string]struct{}{
 		"benchmark-url", "benchmark-timeout", "benchmark-disabled",
 	),
 	"tailscale": fieldSet(
-		"name", "type", "auth-key", "hostname", "control-url", "ephemeral", "exit-node",
+		"name", "type", "auth-key", "hostname", "control-url", "exit-node",
+		"auto-route-disabled", "direct-peer-udp", "dialer-proxy",
 	),
 	"ssh": outboundFieldSet(
 		"name", "type", "server", "port", "user", "password", "private-key",

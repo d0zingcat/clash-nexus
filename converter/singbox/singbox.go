@@ -239,8 +239,14 @@ func (b *builder) buildOutbounds() {
 			b.warnf("skipping proxy: expected mapping")
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(clash.MapGetStr(proxy, "type", "")), "wireguard") {
-			endpoint := b.buildWireGuardEndpoint(proxy)
+		proxyType := strings.ToLower(strings.TrimSpace(clash.MapGetStr(proxy, "type", "")))
+		if proxyType == "wireguard" || proxyType == "tailscale" {
+			var endpoint map[string]interface{}
+			if proxyType == "tailscale" {
+				endpoint = b.buildTailscaleEndpoint(proxy)
+			} else {
+				endpoint = b.buildWireGuardEndpoint(proxy)
+			}
 			if endpoint == nil {
 				continue
 			}
@@ -944,8 +950,8 @@ func (b *builder) resolvePolicy(policy, context string) string {
 	if b.outboundTags[policy] {
 		return policy
 	}
-	b.warnf("%s: policy %q has no matching outbound, using DIRECT", context, policy)
-	return directTag
+	b.warnf("%s: policy %q has no matching outbound, using REJECT", context, policy)
+	return rejectTag
 }
 
 func normalizePolicy(policy string) string {

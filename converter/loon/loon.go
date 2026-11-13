@@ -1002,8 +1002,9 @@ func convertProxyGroups(groups []map[string]interface{}, chainMap map[string]str
 			members = append(members, name+"_Filter")
 		}
 		if len(members) == 0 {
-			warnings = append(warnings, fmt.Sprintf("proxy group %q has no usable members; falling back to DIRECT", name))
-			members = []string{"DIRECT"}
+			fallback := converter.EmptyGroupPolicy(len(clash.ToStringSlice(g["proxies"])) > 0)
+			warnings = append(warnings, fmt.Sprintf("proxy group %q has no usable members; falling back to %s", name, fallback))
+			members = []string{fallback}
 		}
 
 		memberStr := strings.Join(members, ",")
@@ -1349,6 +1350,7 @@ func convert(config map[string]interface{}, root *yaml.Node) (string, []string) 
 	sections = append(sections, groupText)
 
 	rules, _ := config["rules"].([]interface{})
+	rules = converter.RejectRemovedProxyRules(rules, proxies, groups, available, "Loon", &warnings)
 	ruleProviderOrder := clash.OrderedKeysFromNode(root, "rule-providers")
 	_, ruleProvidersMap := clash.ToOrderedMap(config["rule-providers"])
 	if ruleProvidersMap == nil {
